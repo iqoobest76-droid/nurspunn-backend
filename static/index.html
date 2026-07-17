@@ -15,11 +15,11 @@
   <link rel="stylesheet" href="styles.css">
   <script src="locale.js"></script>
   <style>
-    body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+    body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); -webkit-overflow-scrolling: touch; overscroll-behavior: none; }
     .titlebar { display: none !important; }
     .side { display: none !important; }
     .layout { margin-left: 0 !important; }
-    .main { width: 100% !important; }
+    .main { width: 100% !important; overflow-y: auto; -webkit-overflow-scrolling: touch; }
     .app::before { inset: 0 0 120px 0 !important; }
     .auth-pop { display: none !important; }
     .google-chip { display: none !important; }
@@ -97,15 +97,15 @@
     .settings-save { background: #fff; color: #000; }
     .settings-cancel { background: rgba(255,255,255,0.1); color: #fff; }
 
-    .scroll { padding: 8px 12px 12px !important; }
-    .cards { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important; gap: 10px !important; }
-    .section-title { font-size: 18px !important; margin-bottom: 12px !important; font-weight: 700 !important; }
+    .scroll { padding: 8px 12px 12px !important; scroll-behavior: smooth; }
+    .cards { grid-template-columns: repeat(3, 1fr) !important; gap: 8px !important; will-change: contents; }
+    .section-title { font-size: 17px !important; margin-bottom: 10px !important; font-weight: 700 !important; }
     .card { padding: 0 !important; border-radius: 8px !important; background: transparent !important; }
     .card:hover { transform: none !important; box-shadow: none !important; }
     .card:active { transform: scale(0.97) !important; }
-    .card-img { border-radius: 8px !important; margin-bottom: 6px !important; }
-    .card-title { font-size: 12px !important; font-weight: 500 !important; }
-    .card-sub { font-size: 10px !important; color: rgba(255,255,255,0.5) !important; }
+    .card-img { border-radius: 8px !important; margin-bottom: 4px !important; aspect-ratio: 1 !important; }
+    .card-title { font-size: 11px !important; font-weight: 500 !important; line-height: 1.3 !important; }
+    .card-sub { font-size: 9px !important; color: rgba(255,255,255,0.45) !important; }
     .content { padding-bottom: 52px !important; }
 
     .search-layout { flex-direction: column; gap: 0; padding: 0 8px 8px !important; }

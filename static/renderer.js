@@ -251,7 +251,34 @@
   function trackText(t) { return [t?.title, t?.channel].filter(Boolean).join(' '); }
   function recommendationQueries() {
     const q = [];
-    q.push('popular music hits', 'new music 2026', 'viral songs');
+    // Build queries from listening history and favorites
+    const historyTracks = [];
+    try { historyTracks.push(...JSON.parse(localStorage.getItem('nurspunn_history') || '[]')); } catch(e) {}
+    try { historyTracks.push(...favorites); } catch(e) {}
+
+    if (historyTracks.length > 0) {
+      // Infer genres from history
+      const genreCounts = {};
+      historyTracks.forEach(t => {
+        const genres = inferGenres(trackText(t));
+        genres.forEach(g => { genreCounts[g] = (genreCounts[g] || 0) + 1; });
+      });
+      // Sort by frequency
+      const sorted = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]);
+      sorted.forEach(([genre]) => {
+        const profile = GENRE_PROFILES.find(p => p.key === genre);
+        if (profile) profile.queries.forEach(pq => q.push(pq));
+      });
+      // Also use artist/channel names from history
+      const channels = new Set();
+      historyTracks.slice(0, 15).forEach(t => { if (t.channel) channels.add(t.channel); });
+      const chArr = [...channels].slice(0, 3);
+      chArr.forEach(ch => q.push(ch + ' music'));
+    }
+    // Fallback if no history
+    if (q.length === 0) {
+      q.push('popular music 2026', 'viral songs 2026', 'trending music');
+    }
     return [...new Set(q)].slice(0, 6);
   }
   function isPlayableTrack(t) { return !!(t && t.id); }
@@ -350,7 +377,9 @@
     try {
       if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
         window.Capacitor.Plugins.App.addListener('backButton', function () {
-          if (navStack.length > 0) {
+          if (fsPlayer && fsPlayer.classList.contains('show')) {
+            closeFsPlayer();
+          } else if (navStack.length > 0) {
             var prev = navStack.pop();
             currentViewName = '';
             if (prev === 'home') { loadHome(); showView('home', true); }
@@ -370,6 +399,21 @@
     } catch (e) { console.warn('Back button setup failed', e); }
   }
   setupBackButton();
+
+  // Browser/PWA back button (popstate)
+  window.addEventListener('popstate', function() {
+    if (fsPlayer && fsPlayer.classList.contains('show')) {
+      closeFsPlayer();
+    } else if (navStack.length > 0) {
+      var prev = navStack.pop();
+      currentViewName = '';
+      if (prev === 'home') { loadHome(); showView('home', true); }
+      else if (prev === 'search') { showView('search', true); }
+      else if (prev === 'fav') { showView('fav', true); }
+      else if (prev === 'ai') { showView('ai', true); }
+      else { showView('home', true); }
+    }
+  });
 
   function aiAppend(role, text) {
     if (!aiMessages) return;
@@ -435,7 +479,23 @@
     }).catch(() => []);
   }
 
-  function ytHome() { return ytSearch('popular music 2026', 20); }
+  function ytHome() {
+    const queries = recommendationQueries();
+    // Pick 2-3 random queries from the list
+    const shuffled = queries.sort(() => Math.random() - 0.5);
+    const picked = shuffled.slice(0, 2);
+    // Search with first query, merge with second
+    return ytSearch(picked[0], 15).then(r1 => {
+      if (picked[1]) {
+        return ytSearch(picked[1], 10).then(r2 => {
+          const seen = new Set(r1.map(t => t.id));
+          const merged = [...r1, ...r2.filter(t => !seen.has(t.id))];
+          return merged.slice(0, 20);
+        });
+      }
+      return r1;
+    });
+  }
 
   // ========== Playback via Piped + HTML5 Audio ==========
   let streamUrl = '';
@@ -530,6 +590,14 @@
     btnHeart.textContent = liked ? '\u2665' : '\u2661';
     btnHeart.classList.toggle('liked', liked);
     syncFsPlayer(t, cover, coverFallback);
+    // Save to listening history
+    try {
+      var hist = JSON.parse(localStorage.getItem('nurspunn_history') || '[]');
+      hist = hist.filter(h => h.id !== t.id);
+      hist.unshift({ id: t.id, title: t.title, channel: t.channel, thumbnail: t.thumbnail || '' });
+      if (hist.length > 50) hist = hist.slice(0, 50);
+      localStorage.setItem('nurspunn_history', JSON.stringify(hist));
+    } catch(e) {}
     $$('.ri').forEach((r, n) => r.classList.toggle('active', n === i));
     $$('.tr').forEach((r, n) => r.classList.toggle('active', n === i));
     renderSide();
@@ -880,6 +948,7 @@
     syncFsPlayer();
     fsPlayer.classList.add('show');
     document.body.style.overflow = 'hidden';
+    history.pushState({ fs: true }, '');
   }
 
   function closeFsPlayer() {
