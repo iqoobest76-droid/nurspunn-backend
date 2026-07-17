@@ -558,11 +558,21 @@
   // ========== Playback via Piped + HTML5 Audio ==========
   let streamUrl = '';
   let loadingStream = false;
+  let audioUnlocked = false;
+
+  // Unlock audio context on first user gesture
+  function unlockAudio() {
+    if (audioUnlocked) return;
+    try {
+      const silent = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
+      silent.volume = 0;
+      silent.play().then(() => { audioUnlocked = true; silent.remove(); }).catch(() => { silent.remove(); });
+    } catch(e) {}
+  }
+  document.addEventListener('touchstart', unlockAudio, { once: true });
+  document.addEventListener('click', unlockAudio, { once: true });
 
   audio.addEventListener('loadedmetadata', () => {
-    playing = true;
-    setPlayIcon(true);
-    btnPlay.classList.remove('is-loading');
     const dur = audio.duration || 0;
     if (dur > 0) {
       tEnd.textContent = fmt(dur);
@@ -574,7 +584,20 @@
         fsTimeNow.textContent = '0:00';
       }
     }
+  });
+
+  // "playing" fires when audio actually starts producing sound
+  audio.addEventListener('playing', () => {
+    playing = true;
+    setPlayIcon(true);
+    btnPlay.classList.remove('is-loading');
     try { if (window.AndroidMusic && playlist[idx]) { window.AndroidMusic.updateNotification(playlist[idx].title || 'nurspunn', playlist[idx].channel || 'Playing'); } } catch(e) {}
+  });
+
+  audio.addEventListener('pause', () => {
+    if (!audio.ended && audio.currentTime > 0 && audio.currentTime < audio.duration) {
+      // Real pause, not end-of-track
+    }
   });
 
   audio.addEventListener('error', (e) => {
@@ -671,12 +694,11 @@
     }
     try { if (window.AndroidMusic) { window.AndroidMusic.updateNotification(t.title || 'nurspunn', t.channel || 'Playing music'); } } catch(e) {}
     btnPlay.classList.add('is-loading');
-    setPlayIcon(true);
+    setPlayIcon(false);
     playing = false;
     audio.pause();
     audio.src = '';
     streamUrl = '';
-    // Try to preload: start fetching stream URL immediately
     getStreamUrl(t.id).then(url => {
       if (idx !== i) return;
       if (url) {
@@ -686,7 +708,9 @@
         audio.play().then(() => {
           playing = true;
           setPlayIcon(true);
-        }).catch(() => {
+          btnPlay.classList.remove('is-loading');
+        }).catch(e => {
+          console.warn('play() failed', e);
           btnPlay.classList.remove('is-loading');
           setPlayIcon(false);
           playing = false;
