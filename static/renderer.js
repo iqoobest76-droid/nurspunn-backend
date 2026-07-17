@@ -291,6 +291,10 @@
     if (view === currentViewName && !skipHistory) return;
     if (!skipHistory) { navStack.push(currentViewName); }
     currentViewName = view;
+    // Push browser history so back button has somewhere to go
+    if (!skipHistory) {
+      try { history.pushState({ view: view }, ''); } catch(e) {}
+    }
     vHome.classList.add('hidden');
     vSearch.classList.add('hidden');
     vFav.classList.add('hidden');
@@ -373,35 +377,86 @@
   }
 
   // Android back button handling
+  let backHandled = false;
   function setupBackButton() {
-    try {
-      if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
-        window.Capacitor.Plugins.App.addListener('backButton', function () {
-          if (fsPlayer && fsPlayer.classList.contains('show')) {
-            closeFsPlayer();
-          } else if (navStack.length > 0) {
-            var prev = navStack.pop();
-            currentViewName = '';
-            if (prev === 'home') { loadHome(); showView('home', true); }
-            else if (prev === 'search') { showView('search', true); }
-            else if (prev === 'fav') { showView('fav', true); }
-            else if (prev === 'ai') { showView('ai', true); }
-            else { showView('home', true); }
-          } else {
-            if (window.Capacitor.Plugins.App.minimizeApp) {
-              window.Capacitor.Plugins.App.minimizeApp();
+    function registerBack() {
+      if (backHandled) return;
+      try {
+        var Cap = window.Capacitor || window.CapacitorJS;
+        if (Cap && Cap.Plugins && Cap.Plugins.App) {
+          Cap.Plugins.App.addListener('backButton', function () {
+            if (fsPlayer && fsPlayer.classList.contains('show')) {
+              closeFsPlayer();
+            } else if (navStack.length > 0) {
+              var prev = navStack.pop();
+              currentViewName = '';
+              if (prev === 'home') { loadHome(); showView('home', true); }
+              else if (prev === 'search') { showView('search', true); }
+              else if (prev === 'fav') { showView('fav', true); }
+              else if (prev === 'ai') { showView('ai', true); }
+              else { showView('home', true); }
             } else {
-              window.Capacitor.Plugins.App.exitApp();
+              if (Cap.Plugins.App.minimizeApp) {
+                Cap.Plugins.App.minimizeApp();
+              } else if (Cap.Plugins.App.exitApp) {
+                Cap.Plugins.App.exitApp();
+              }
             }
-          }
-        });
+          });
+          backHandled = true;
+          console.log('Back button handler registered');
+        }
+      } catch (e) { console.warn('Back button setup failed', e); }
+    }
+    registerBack();
+    // Retry if Capacitor bridge not ready yet
+    if (!backHandled) {
+      setTimeout(registerBack, 500);
+      setTimeout(registerBack, 1500);
+      setTimeout(registerBack, 3000);
+    }
+    // Cordova-style fallback
+    document.addEventListener('backbutton', function(e) {
+      e.preventDefault();
+      if (fsPlayer && fsPlayer.classList.contains('show')) {
+        closeFsPlayer();
+      } else if (navStack.length > 0) {
+        var prev = navStack.pop();
+        currentViewName = '';
+        if (prev === 'home') { loadHome(); showView('home', true); }
+        else if (prev === 'search') { showView('search', true); }
+        else if (prev === 'fav') { showView('fav', true); }
+        else if (prev === 'ai') { showView('ai', true); }
+        else { showView('home', true); }
       }
-    } catch (e) { console.warn('Back button setup failed', e); }
+    }, false);
+    // Also handle via popstate for browser/PWA
+    window.addEventListener('popstate', function(e) {
+      if (fsPlayer && fsPlayer.classList.contains('show')) {
+        closeFsPlayer();
+      } else if (e.state && e.state.view) {
+        currentViewName = '';
+        var v = e.state.view;
+        if (v === 'home') { loadHome(); showView('home', true); }
+        else if (v === 'search') { showView('search', true); }
+        else if (v === 'fav') { showView('fav', true); }
+        else if (v === 'ai') { showView('ai', true); }
+        else { showView('home', true); }
+      } else if (navStack.length > 0) {
+        var prev = navStack.pop();
+        currentViewName = '';
+        if (prev === 'home') { loadHome(); showView('home', true); }
+        else if (prev === 'search') { showView('search', true); }
+        else if (prev === 'fav') { showView('fav', true); }
+        else if (prev === 'ai') { showView('ai', true); }
+        else { showView('home', true); }
+      }
+    });
   }
   setupBackButton();
 
-  // Browser/PWA back button (popstate)
-  window.addEventListener('popstate', function() {
+  // Register handler for Java-side onBackPressed
+  window._nursBackHandler = function() {
     if (fsPlayer && fsPlayer.classList.contains('show')) {
       closeFsPlayer();
     } else if (navStack.length > 0) {
@@ -413,7 +468,9 @@
       else if (prev === 'ai') { showView('ai', true); }
       else { showView('home', true); }
     }
-  });
+    // Return value tells Java if we handled it
+    return navStack.length > 0 || (fsPlayer && fsPlayer.classList.contains('show'));
+  };
 
   function aiAppend(role, text) {
     if (!aiMessages) return;
@@ -720,6 +777,8 @@
     });
   }
   loadHome();
+  // Push initial state so back button doesn't exit immediately
+  try { history.replaceState({ view: 'home' }, ''); } catch(e) {}
 
   let st;
   search.addEventListener('input', function () {
