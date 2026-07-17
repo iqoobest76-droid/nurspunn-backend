@@ -208,6 +208,7 @@
   function loadFavs() {
     try { favorites = JSON.parse(localStorage.getItem('nurspunn_favs') || '[]'); } catch(e) { favorites = []; }
   }
+  loadFavs();
   function saveFavs() { localStorage.setItem('nurspunn_favs', JSON.stringify(favorites)); }
   function isFav(id) { return favorites.some(f => f.id === id); }
   function toggleFav(track) {
@@ -567,6 +568,11 @@
       tEnd.textContent = fmt(dur);
       pFill.style.width = '0%';
       tNow.textContent = '0:00';
+      if (fsPlayer.classList.contains('show')) {
+        fsTimeEnd.textContent = fmt(dur);
+        fsFill.style.width = '0%';
+        fsTimeNow.textContent = '0:00';
+      }
     }
     try { if (window.AndroidMusic && playlist[idx]) { window.AndroidMusic.updateNotification(playlist[idx].title || 'nurspunn', playlist[idx].channel || 'Playing'); } } catch(e) {}
   });
@@ -670,13 +676,17 @@
     audio.pause();
     audio.src = '';
     streamUrl = '';
+    // Try to preload: start fetching stream URL immediately
     getStreamUrl(t.id).then(url => {
       if (idx !== i) return;
       if (url) {
         streamUrl = url;
         audio.src = url;
         audio.load();
-        audio.play().catch(() => {
+        audio.play().then(() => {
+          playing = true;
+          setPlayIcon(true);
+        }).catch(() => {
           btnPlay.classList.remove('is-loading');
           setPlayIcon(false);
           playing = false;
