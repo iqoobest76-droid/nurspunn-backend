@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: nurspunn-backend
+    runtime: python
+    plan: free
+    buildCommand: apt-get update && apt-get install -y nodejs && pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 10000

@@ -1,0 +1,110 @@
+window.NURS_LOCALES = {
+  kk: {
+    appTitle: 'nurspunn',
+    home: 'Басты бет',
+    search: 'Іздеу',
+    favorites: 'Таңдаулы',
+    ai: 'NURS ЖИ-БОТ',
+    library: 'Кітапхана',
+    searchPlaceholder: 'Ән іздеу...',
+    suggestions: 'Ұсыныстар',
+    popular: 'Танымал',
+    noResults: 'Ештеңе табылмады',
+    searching: 'Іздеу...',
+    results: 'Нәтижелер',
+    lyrics: 'Мәтін',
+    lyricsNotFound: 'Мәтін табылмады',
+    lyricsLoading: 'Мәтін іздеу...',
+    lyricsUnavailable: 'Мәтін қолжетімді емес',
+    relatedTracks: 'Ұқсас әндер',
+    relatedLoading: 'Ұқсас әндер ізделіп жатыр...',
+    relatedNotFound: 'Ұқсас ән табылмады',
+    favoritesEmpty: 'Таңдаулы әндер жоқ',
+    downloadsEmpty: 'Жүктелген әндер жоқ',
+    downloading: 'Жүктелуде...',
+    downloaded: 'Жүктелді',
+    play: 'Ойнату',
+    pause: 'Пауза',
+    next: 'Келесі',
+    prev: 'Алдыңғы',
+    homeTitle: 'nurspunn',
+    aiWelcome: 'Сәлем! Мен NURS ЖИ-БОТ. Ән табуға, жанр түсіндіруге, ұқсас музыка ұсынуға көмектесемін.',
+    aiThinking: 'NURS ЖИ-БОТ ойланып жатыр...',
+    aiPlaceholder: 'Ән, үзінді, жанр немесе орындаушы туралы сұра...',
+    aiSend: 'Жіберу',
+    voiceControl: 'Дауыспен басқару',
+    voiceOff: 'Өшірулі',
+    voiceListening: 'Тыңдап тұрмын...',
+    voiceProcessing: 'Gemini өңдеп жатыр...',
+    voiceMicError: 'Микрофон рұқсаты жоқ',
+    voiceSayNurs: '"Нұрс" деп айтыңыз',
+    noRecommendations: 'Ұсыныстар әлі жоқ',
+    recsFailed: 'Ұсыныстар шықпады',
+    google: 'Google',
+    musicOnly: 'тек музыка',
+    langSwitch: 'EN'
+  },
+  en: {
+    appTitle: 'nurspunn',
+    home: 'Home',
+    search: 'Search',
+    favorites: 'Favorites',
+    ai: 'NURS AI',
+    library: 'Library',
+    searchPlaceholder: 'Search songs...',
+    suggestions: 'Suggestions',
+    popular: 'Popular',
+    noResults: 'Nothing found',
+    searching: 'Searching...',
+    results: 'Results',
+    lyrics: 'Lyrics',
+    lyricsNotFound: 'Lyrics not found',
+    lyricsLoading: 'Searching lyrics...',
+    lyricsUnavailable: 'Lyrics unavailable',
+    relatedTracks: 'Related',
+    relatedLoading: 'Finding related tracks...',
+    relatedNotFound: 'No related tracks found',
+    favoritesEmpty: 'No favorite songs yet',
+    downloadsEmpty: 'No downloaded songs yet',
+    downloading: 'Downloading...',
+    downloaded: 'Downloaded',
+    play: 'Play',
+    pause: 'Pause',
+    next: 'Next',
+    prev: 'Previous',
+    homeTitle: 'nurspunn',
+    aiWelcome: 'Hello! I\'m NURS AI. I help find songs, explain genres, and recommend music.',
+    aiThinking: 'NURS AI is thinking...',
+    aiPlaceholder: 'Ask about a song, lyrics, genre or artist...',
+    aiSend: 'Send',
+    voiceControl: 'Voice Control',
+    voiceOff: 'Off',
+    voiceListening: 'Listening...',
+    voiceProcessing: 'Processing...',
+    voiceMicError: 'Microphone permission denied',
+    voiceSayNurs: 'Say "Hey Nurs"',
+    noRecommendations: 'No recommendations yet',
+    recsFailed: 'Recommendations failed',
+    google: 'Google',
+    musicOnly: 'music only',
+    langSwitch: 'ҚЗ'
+  }
+};
+
+window.NURS_I18N = {
+  _lang: localStorage.getItem('nurspunn_lang') || 'kk',
+  t(key) {
+    const loc = window.NURS_LOCALES[this._lang] || window.NURS_LOCALES.kk;
+    return loc[key] || key;
+  },
+  setLang(lang) {
+    this._lang = lang;
+    localStorage.setItem('nurspunn_lang', lang);
+    document.documentElement.lang = lang;
+    if (window.NURS_ON_LANG_CHANGE) window.NURS_ON_LANG_CHANGE(lang);
+  },
+  getLang() { return this._lang; },
+  toggle() {
+    this.setLang(this._lang === 'kk' ? 'en' : 'kk');
+  }
+};
