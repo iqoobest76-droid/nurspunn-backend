@@ -38,6 +38,23 @@
   const aiForm = $('#ai-form');
   const aiInput = $('#ai-input');
   const bottomNav = $('.bottom-nav');
+  const fsPlayer = $('#fs-player');
+  const fsClose = $('#fs-close');
+  const fsBg = $('#fs-bg');
+  const fsArt = $('#fs-art');
+  const fsTitle = $('#fs-title');
+  const fsArtist = $('#fs-artist');
+  const fsHeart = $('#fs-heart');
+  const fsBar = $('#fs-bar');
+  const fsFill = $('#fs-fill');
+  const fsTimeNow = $('#fs-time-now');
+  const fsTimeEnd = $('#fs-time-end');
+  const fsPlay = $('#fs-play');
+  const fsPrev = $('#fs-prev');
+  const fsNext = $('#fs-next');
+  const fsVol = $('#fs-vol');
+  const fsPlayingFrom = $('#fs-playing-from');
+  const playerBar = $('#player-bar');
 
   let YT_API_KEY = '';
   let GEMINI_API_KEY = '';
@@ -210,6 +227,7 @@
       if (h.dataset.id === trackId) { h.classList.toggle('liked', liked); h.textContent = liked ? '\u2665' : '\u2661'; }
     });
     if (btnHeart.dataset.id === trackId) { btnHeart.classList.toggle('liked', liked); btnHeart.textContent = liked ? '\u2665' : '\u2661'; }
+    if (fsPlayer.classList.contains('show') && fsHeart.dataset.id === trackId) { fsHeart.classList.toggle('liked', liked); fsHeart.textContent = liked ? '\u2665' : '\u2661'; }
   }
   function cleanText(text) {
     return String(text || '').toLowerCase().replace(/\[[^\]]*]/g, ' ').replace(/\([^)]*\)/g, ' ').replace(/\b(official|video|audio|lyrics?|lyric|visualizer|clip|ft|feat|prod)\b/g, ' ').replace(/[#|_/\\.,:;!?'"`~]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -265,7 +283,10 @@
     volume: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4zm12.4-.9-1.3 1.3A3.6 3.6 0 0 1 16 12c0 1-.4 1.9-.9 2.6l1.3 1.3A5.5 5.5 0 0 0 18 12c0-1.5-.6-2.9-1.6-3.9z"/></svg>'
   };
   function setIcon(el, name) { if (el && ICONS[name]) el.innerHTML = ICONS[name]; }
-  function setPlayIcon(isPlaying) { setIcon(btnPlay, isPlaying ? 'pause' : 'play'); }
+  function setPlayIcon(isPlaying) {
+    setIcon(btnPlay, isPlaying ? 'pause' : 'play');
+    if (fsPlayer.classList.contains('show')) setIcon(fsPlay, isPlaying ? 'pause' : 'play');
+  }
   function youtubeThumb(id, q) { return id ? 'https://i.ytimg.com/vi/' + id + '/' + (q || 'maxresdefault') + '.jpg' : ''; }
   function bestThumb(t) { return youtubeThumb(t && t.id) || (t && t.thumbnail) || ''; }
   function fallbackThumb(t) { return youtubeThumb(t && t.id, 'hqdefault') || (t && t.thumbnail) || ''; }
@@ -451,6 +472,11 @@
     if (dur > 0) {
       pFill.style.width = ((cur / dur) * 100) + '%';
       tNow.textContent = fmt(cur);
+      if (fsPlayer.classList.contains('show')) {
+        fsFill.style.width = ((cur / dur) * 100) + '%';
+        fsTimeNow.textContent = fmt(cur);
+        fsTimeEnd.textContent = fmt(dur);
+      }
     }
     updateSyncedLyrics(cur);
   });
@@ -474,6 +500,11 @@
         pFill.style.width = ((cur / dur) * 100) + '%';
         tNow.textContent = fmt(cur);
         tEnd.textContent = fmt(dur);
+        if (fsPlayer.classList.contains('show')) {
+          fsFill.style.width = ((cur / dur) * 100) + '%';
+          fsTimeNow.textContent = fmt(cur);
+          fsTimeEnd.textContent = fmt(dur);
+        }
       }
       updateSyncedLyrics(cur);
       const deepTrack = idx >= 0 ? playlist[idx] : null;
@@ -498,6 +529,7 @@
     btnHeart.dataset.id = t.id;
     btnHeart.textContent = liked ? '\u2665' : '\u2661';
     btnHeart.classList.toggle('liked', liked);
+    syncFsPlayer(t, cover, coverFallback);
     $$('.ri').forEach((r, n) => r.classList.toggle('active', n === i));
     $$('.tr').forEach((r, n) => r.classList.toggle('active', n === i));
     renderSide();
@@ -799,6 +831,115 @@
     const line = lyricsView.querySelector('.lyric-line.active');
     if (line) line.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
+
+  // === FULLSCREEN PLAYER ===
+
+  function syncFsPlayer(t, cover, coverFallback) {
+    if (!t) {
+      if (idx < 0 || !playlist[idx]) return;
+      t = playlist[idx];
+      cover = bestThumb(t);
+      coverFallback = fallbackThumb(t);
+    }
+    fsTitle.textContent = t.title;
+    fsArtist.textContent = t.channel;
+    fsArt.innerHTML = '<img src="' + esc(cover) + '" data-fallback="' + esc(fallbackThumb(t)) + '" alt="">';
+    bindImageFallback(fsArt);
+    fsBg.style.backgroundImage = 'url(' + cover + ')';
+    const liked = isFav(t.id);
+    fsHeart.textContent = liked ? '\u2665' : '\u2661';
+    fsHeart.classList.toggle('liked', liked);
+    fsHeart.dataset.id = t.id;
+    fsPlayingFrom.textContent = 'nurspunn';
+    setIcon(fsPlay, playing ? 'pause' : 'play');
+    const dur = audio.duration || 0;
+    const cur = audio.currentTime || 0;
+    if (dur > 0) {
+      fsFill.style.width = ((cur / dur) * 100) + '%';
+      fsTimeNow.textContent = fmt(cur);
+      fsTimeEnd.textContent = fmt(dur);
+    }
+    // Extract dominant color for gradient animation
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = cover;
+      img.onload = function() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1; canvas.height = 1;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, 1, 1);
+        const d = ctx.getImageData(0, 0, 1, 1).data;
+        const r = d[0], g = d[1], b = d[2];
+        fsArt.style.boxShadow = '0 20px 60px rgba(' + r + ',' + g + ',' + b + ',0.4)';
+      };
+    } catch(e) {}
+  }
+
+  function openFsPlayer() {
+    syncFsPlayer();
+    fsPlayer.classList.add('show');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeFsPlayer() {
+    fsPlayer.classList.remove('show');
+    document.body.style.overflow = '';
+  }
+
+  fsClose.addEventListener('click', closeFsPlayer);
+  playerBar.addEventListener('click', function(e) {
+    if (e.target.closest('.p-btn') || e.target.closest('.p-heart')) return;
+    openFsPlayer();
+  });
+
+  fsPlay.addEventListener('click', () => {
+    if (idx === -1 && playlist.length > 0) { play(0); return; }
+    if (idx === -1) return;
+    if (playing) { audio.pause(); playing = false; setPlayIcon(false); }
+    else {
+      if (audio.src && audio.src !== '') { audio.play().catch(() => {}); playing = true; setPlayIcon(true); }
+      else { play(idx); }
+    }
+    setIcon(fsPlay, playing ? 'pause' : 'play');
+  });
+
+  fsPrev.addEventListener('click', () => {
+    if (!playlist.length) return;
+    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+    play(idx <= 0 ? playlist.length - 1 : idx - 1);
+  });
+
+  fsNext.addEventListener('click', doNext);
+
+  fsHeart.addEventListener('click', () => { if (idx < 0 || !playlist[idx]) return; toggleFav(playlist[idx]); });
+
+  fsBar.addEventListener('click', e => {
+    const dur = audio.duration || 0;
+    if (!dur) return;
+    const rect = fsBar.getBoundingClientRect();
+    audio.currentTime = ((e.clientX - rect.left) / rect.width) * dur;
+  });
+
+  fsVol.addEventListener('input', function() {
+    const v = Math.max(0, Math.min(1, parseFloat(this.value) || 0));
+    audio.volume = v;
+    volume.value = v;
+  });
+
+  volume.addEventListener('input', function() {
+    const v = Math.max(0, Math.min(1, parseFloat(this.value) || 0));
+    audio.volume = v;
+    fsVol.value = v;
+  });
+
+  // Gradient animation when playing
+  audio.addEventListener('play', () => {
+    if (fsPlayer.classList.contains('show')) fsBg.classList.add('animating');
+  });
+  audio.addEventListener('pause', () => {
+    fsBg.classList.remove('animating');
+  });
 
   applyLang();
 })();
