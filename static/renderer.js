@@ -106,22 +106,11 @@
   }
 
   async function getStreamUrl(videoId) {
-    if (streamCache[videoId]) {
-      const cached = streamCache[videoId];
-      // If we have both direct and proxy, return them both
-      if (typeof cached === 'object' && cached.direct) return cached;
-      return cached;
-    }
+    if (streamCache[videoId]) return streamCache[videoId];
     try {
       const data = await apiGet('/api/stream?id=' + encodeURIComponent(videoId));
-      let result = null;
-      if (data && data.proxy_url) {
-        result = { proxy: BACKEND_URL + data.proxy_url, direct: data.raw_url || null };
-      } else if (data && data.url) {
-        result = { proxy: null, direct: data.url };
-      }
-      if (result) {
-        streamCache[videoId] = result;
+      if (data && data.url) {
+        streamCache[videoId] = data.url;
         try {
           const cache = {};
           Object.keys(streamCache).forEach(k => {
@@ -130,53 +119,15 @@
           });
           localStorage.setItem('nurspunn_stream_cache', JSON.stringify(cache));
         } catch(e) {}
-        return result;
+        return data.url;
       }
     } catch(e) { console.warn('getStreamUrl server failed', e); }
     return null;
   }
 
-  function tryPlayUrl(urls, index) {
-    if (index >= urls.length) {
-      btnPlay.classList.remove('is-loading');
-      fsPlay.classList.remove('is-loading');
-      setPlayIcon(false);
-      playing = false;
-      setLoading(idx >= 0 && playlist[idx] ? playlist[idx].id : '', false);
-      return;
-    }
-    const url = urls[index];
-    if (!url) { tryPlayUrl(urls, index + 1); return; }
-    const audioEl = audio;
-    audioEl.src = url;
-    const loadTimeout = setTimeout(() => {
-      audioEl.removeEventListener('canplay', onCanPlay);
-      audioEl.removeEventListener('error', onPlayError);
-      tryPlayUrl(urls, index + 1);
-    }, 15000);
-    function onCanPlay() {
-      clearTimeout(loadTimeout);
-      audioEl.removeEventListener('canplay', onCanPlay);
-      audioEl.removeEventListener('error', onPlayError);
-      setLoading(idx >= 0 && playlist[idx] ? playlist[idx].id : '', false);
-      btnPlay.classList.remove('is-loading');
-      fsPlay.classList.remove('is-loading');
-      audioEl.play().catch(() => {});
-    }
-    function onPlayError() {
-      clearTimeout(loadTimeout);
-      audioEl.removeEventListener('canplay', onCanPlay);
-      audioEl.removeEventListener('error', onPlayError);
-      tryPlayUrl(urls, index + 1);
-    }
-    audioEl.addEventListener('canplay', onCanPlay, { once: true });
-    audioEl.addEventListener('error', onPlayError, { once: true });
-    audioEl.load();
-  }
-
   function preloadStream(videoId) {
     if (!videoId || streamCache[videoId]) return;
-    getStreamUrl(videoId); // Will cache result
+    getStreamUrl(videoId).catch(() => {});
   }
 
   function loadFavs() {
@@ -684,51 +635,47 @@
     streamUrl = '';
     setLoading(t.id, true);
 
-    function startPlayback(url) {
-      streamUrl = url;
-      audio.src = url;
-      // Timeout: if neither canplay nor error fires in 30s, stop loading
-      const loadTimeout = setTimeout(() => {
-        audio.removeEventListener('canplay', onReady);
-        audio.removeEventListener('error', onError);
-        btnPlay.classList.remove('is-loading');
-        fsPlay.classList.remove('is-loading');
-        setPlayIcon(false);
-        playing = false;
-        setLoading(t.id, false);
-      }, 30000);
-      function onReady() {
-        clearTimeout(loadTimeout);
-        audio.removeEventListener('canplay', onReady);
-        audio.removeEventListener('error', onError);
-        setLoading(t.id, false);
-        btnPlay.classList.remove('is-loading');
-        fsPlay.classList.remove('is-loading');
-        audio.play().catch(e => {
-          console.warn('play() blocked, retrying', e);
-          setTimeout(() => { audio.play().catch(() => {}); }, 400);
-        });
-      }
-      function onError() {
-        clearTimeout(loadTimeout);
-        audio.removeEventListener('canplay', onReady);
-        audio.removeEventListener('error', onError);
-        setLoading(t.id, false);
-        btnPlay.classList.remove('is-loading');
-        fsPlay.classList.remove('is-loading');
-        setPlayIcon(false);
-        playing = false;
-      }
-      audio.addEventListener('canplay', onReady, { once: true });
-      audio.addEventListener('error', onError, { once: true });
-      audio.load();
-    }
-
-    getStreamUrl(t.id).then(urls => {
+    getStreamUrl(t.id).then(url => {
       if (idx !== i) return;
-      if (urls) {
-        const urlList = [urls.direct, urls.proxy].filter(Boolean);
-        tryPlayUrl(urlList, 0);
+      if (url) {
+        streamUrl = url;
+        audio.src = url;
+        const loadTimeout = setTimeout(() => {
+          audio.removeEventListener('canplay', onReady);
+          audio.removeEventListener('error', onError);
+          btnPlay.classList.remove('is-loading');
+          fsPlay.classList.remove('is-loading');
+          setPlayIcon(false);
+          playing = false;
+          setLoading(t.id, false);
+        }, 60000);
+        function onReady() {
+          clearTimeout(loadTimeout);
+          audio.removeEventListener('canplay', onReady);
+          audio.removeEventListener('error', onError);
+          setLoading(t.id, false);
+          btnPlay.classList.remove('is-loading');
+          fsPlay.classList.remove('is-loading');
+          audio.muted = false;
+          audio.volume = 1;
+          audio.play().catch(e => {
+            console.warn('play() blocked, retrying', e);
+            setTimeout(() => { audio.play().catch(() => {}); }, 400);
+          });
+        }
+        function onError() {
+          clearTimeout(loadTimeout);
+          audio.removeEventListener('canplay', onReady);
+          audio.removeEventListener('error', onError);
+          setLoading(t.id, false);
+          btnPlay.classList.remove('is-loading');
+          fsPlay.classList.remove('is-loading');
+          setPlayIcon(false);
+          playing = false;
+        }
+        audio.addEventListener('canplay', onReady, { once: true });
+        audio.addEventListener('error', onError, { once: true });
+        audio.load();
       } else {
         btnPlay.classList.remove('is-loading');
         fsPlay.classList.remove('is-loading');

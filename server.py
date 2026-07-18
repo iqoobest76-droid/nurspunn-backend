@@ -5,11 +5,9 @@ nurspunn music backend
 import os
 import json
 import time
-import traceback
 import threading
 import urllib.request
-import urllib.error
-from flask import Flask, request, jsonify, Response, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
 import yt_dlp
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -33,11 +31,6 @@ def _cache_get(key):
 def _cache_set(key, val):
     with _cache_lock:
         _cache[key] = (time.time(), val)
-
-
-def _cache_remove(key):
-    with _cache_lock:
-        _cache.pop(key, None)
 
 
 # Stream pre-extraction is intentionally disabled on Render's free 512 MB
@@ -100,14 +93,12 @@ def api_preextract():
 
 
 def _extract_innertube(vid):
-    """Direct InnerTube API call — faster than yt-dlp. Returns raw URL from cipher (may need signature)."""
+    """InnerTube API — fast but only returns result if a direct URL is available (no cipher)."""
     import urllib.request as req_lib
     clients = [
         {'clientName': 'ANDROID_MUSIC', 'clientVersion': '7.27.52', 'api_key': 'AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI'},
-        {'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', 'clientVersion': '2.0', 'api_key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'},
         {'clientName': 'ANDROID', 'clientVersion': '19.29.37', 'api_key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w'},
         {'clientName': 'IOS', 'clientVersion': '19.29.1', 'api_key': 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc'},
-        {'clientName': 'WEB_REMIX', 'clientVersion': '1.20250303.00.00', 'api_key': 'AIzaSyC9WL3Uj7IsYDQNTBixLWgWYI2X0I1M3bI'},
     ]
     for cl in clients:
         try:
@@ -127,7 +118,7 @@ def _extract_innertube(vid):
             api_url = f'https://www.youtube.com/youtubei/v1/player?key={cl["api_key"]}&prettyPrint=false'
             headers = {
                 'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Referer': 'https://www.youtube.com/',
             }
@@ -140,41 +131,26 @@ def _extract_innertube(vid):
                 continue
             streaming = data.get('streamingData', {})
             formats = streaming.get('adaptiveFormats', []) + streaming.get('formats', [])
-            audio = [f for f in formats if f.get('mimeType', '').startswith('audio/')]
+            audio = [f for f in formats if f.get('mimeType', '').startswith('audio/') and f.get('url')]
             if not audio:
                 continue
-            # Sort by bitrate, prefer mp4a (AAC)
-            aac = [f for f in audio if 'mp4a' in f.get('mimeType', '')]
-            audio.sort(key=lambda f: f.get('bitrate', 0), reverse=True)
-            best = aac[0] if aac else audio[0]
-            stream_url = best.get('url') or _extract_url_from_cipher(best.get('signatureCipher') or best.get('cipher', ''))
-            if stream_url:
-                return {
-                    'raw_url': stream_url,
-                    'proxy_url': f'/api/proxy?id={vid}',
-                    'title': data.get('videoDetails', {}).get('title', ''),
-                    'channel': data.get('videoDetails', {}).get('author', ''),
-                    'thumbnail': f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg',
-                    'duration': data.get('videoDetails', {}).get('lengthSeconds', 0),
-                    'strategy': f'innertube_{cl["clientName"]}',
-                }
+            best = max(audio, key=lambda f: f.get('bitrate', 0))
+            return {
+                'url': best['url'],
+                'title': data.get('videoDetails', {}).get('title', ''),
+                'channel': data.get('videoDetails', {}).get('author', ''),
+                'thumbnail': f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg',
+                'duration': data.get('videoDetails', {}).get('lengthSeconds', 0),
+                'strategy': f'innertube_{cl["clientName"]}',
+            }
         except Exception as e:
             app.logger.warning('innertube %s failed for %s: %s', cl['clientName'], vid, str(e)[:200])
             continue
     return None
 
 
-def _extract_url_from_cipher(cipher_str):
-    """Extract base URL from signatureCipher/cipher parameter."""
-    if not cipher_str:
-        return None
-    import urllib.parse
-    params = urllib.parse.parse_qs(cipher_str)
-    return params.get('url', [None])[0]
-
-
 def _extract_ytdlp(vid):
-    """Extract stream URL using yt-dlp as fallback."""
+    """Extract stream URL using yt-dlp (slow but reliable)."""
     base_opts = {
         'format': 'bestaudio[ext=m4a]/bestaudio',
         'quiet': True,
@@ -183,9 +159,8 @@ def _extract_ytdlp(vid):
         'noplaylist': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'js_runtimes': {'node': {}},
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Referer': 'https://www.youtube.com/',
         },
@@ -212,8 +187,7 @@ def _extract_ytdlp(vid):
                     url = audio_formats[0].get('url')
             if url:
                 return {
-                    'raw_url': url,
-                    'proxy_url': f'/api/proxy?id={vid}',
+                    'url': url,
                     'title': info.get('title'),
                     'channel': info.get('uploader') or info.get('channel') or '',
                     'thumbnail': info.get('thumbnail') or f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg',
@@ -252,87 +226,6 @@ def api_stream():
         'error': 'Audio is temporarily unavailable. Try another song.',
         'detail': f'all extraction methods failed for {vid}',
     }), 503
-
-
-@app.route('/api/proxy')
-def api_proxy():
-    vid = request.args.get('id', '').strip()
-    if not vid:
-        return jsonify({'error': 'missing id'}), 400
-
-    result = _extract_stream(vid)
-    if not result:
-        return jsonify({'error': 'could not extract stream'}), 500
-
-    raw_url = result.get('raw_url')
-    if not raw_url:
-        return jsonify({'error': 'no raw URL'}), 500
-
-    range_header = request.headers.get('Range')
-
-    req_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.youtube.com/',
-        'Origin': 'https://www.youtube.com',
-    }
-    if range_header:
-        req_headers['Range'] = range_header
-
-    try:
-        req = urllib.request.Request(raw_url, headers=req_headers)
-        resp = urllib.request.urlopen(req, timeout=30)
-
-        status = resp.status
-        resp_headers = {
-            'Content-Type': 'audio/mp4',
-            'Access-Control-Allow-Origin': '*',
-            'Accept-Ranges': 'bytes',
-        }
-        if resp.headers.get('Content-Length'):
-            resp_headers['Content-Length'] = resp.headers['Content-Length']
-        if resp.headers.get('Content-Range'):
-            resp_headers['Content-Range'] = resp.headers['Content-Range']
-
-        def generate():
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                yield chunk
-
-        return Response(generate(), status=status, headers=resp_headers)
-    except urllib.error.HTTPError as e:
-        if e.code == 403:
-            app.logger.warning('proxy got 403 for %s, retrying with yt-dlp only', vid)
-            result = _extract_ytdlp(vid)
-            if result and result.get('raw_url'):
-                raw_url = result['raw_url']
-                req = urllib.request.Request(raw_url, headers=req_headers)
-                resp = urllib.request.urlopen(req, timeout=30)
-                status = resp.status
-                resp_headers = {
-                    'Content-Type': 'audio/mp4',
-                    'Access-Control-Allow-Origin': '*',
-                    'Accept-Ranges': 'bytes',
-                }
-                if resp.headers.get('Content-Length'):
-                    resp_headers['Content-Length'] = resp.headers['Content-Length']
-                if resp.headers.get('Content-Range'):
-                    resp_headers['Content-Range'] = resp.headers['Content-Range']
-
-                def generate2():
-                    while True:
-                        chunk = resp.read(65536)
-                        if not chunk:
-                            break
-                        yield chunk
-
-                return Response(generate2(), status=status, headers=resp_headers)
-        app.logger.error('proxy HTTP error for %s: %s', vid, e)
-        return jsonify({'error': str(e)[:200]}), 500
-    except Exception as e:
-        app.logger.error('proxy failed for %s: %s', vid, e)
-        return jsonify({'error': str(e)[:200]}), 500
 
 
 @app.route('/api/search')
