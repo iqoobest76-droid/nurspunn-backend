@@ -663,9 +663,11 @@
       if (url) startPlayback(url);
       else {
         btnPlay.classList.remove('is-loading');
+        fsPlay.classList.remove('is-loading');
         setPlayIcon(false);
         playing = false;
         setLoading(t.id, false);
+        results.innerHTML = '<div class="empty" style="padding:30px;text-align:center;color:rgba(255,255,255,0.5);font-size:13px">Stream unavailable. Tap again to retry.</div>';
       }
     });
     startTimeUpdate();

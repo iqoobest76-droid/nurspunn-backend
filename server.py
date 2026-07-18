@@ -101,11 +101,11 @@ def _extract_innertube(vid):
     """Direct InnerTube API call — faster than yt-dlp."""
     import urllib.request as req_lib
     clients = [
-        {'clientName': 'WEB_REMIX', 'clientVersion': '1.20250303.00.00', 'api_key': 'AIzaSyC9WL3Uj7IsYDQNTBixLWgWYI2X0I1M3bI'},
-        {'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', 'clientVersion': '2.0', 'api_key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'},
         {'clientName': 'ANDROID_MUSIC', 'clientVersion': '7.27.52', 'api_key': 'AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI'},
+        {'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', 'clientVersion': '2.0', 'api_key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'},
         {'clientName': 'ANDROID', 'clientVersion': '19.29.37', 'api_key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w'},
         {'clientName': 'IOS', 'clientVersion': '19.29.1', 'api_key': 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc'},
+        {'clientName': 'WEB_REMIX', 'clientVersion': '1.20250303.00.00', 'api_key': 'AIzaSyC9WL3Uj7IsYDQNTBixLWgWYI2X0I1M3bI'},
     ]
     for cl in clients:
         try:
@@ -122,14 +122,14 @@ def _extract_innertube(vid):
                 'contentCheckOk': True,
                 'racyCheckOk': True,
             }).encode('utf-8')
-            url = f'https://www.youtube.com/youtubei/v1/player?key={cl["api_key"]}&prettyPrint=false'
+            api_url = f'https://www.youtube.com/youtubei/v1/player?key={cl["api_key"]}&prettyPrint=false'
             headers = {
                 'Content-Type': 'application/json',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Referer': 'https://www.youtube.com/',
             }
-            req = req_lib.Request(url, data=body, headers=headers)
+            req = req_lib.Request(api_url, data=body, headers=headers)
             with req_lib.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
             ps = data.get('playabilityStatus', {})
@@ -141,9 +141,11 @@ def _extract_innertube(vid):
             audio = [f for f in formats if f.get('mimeType', '').startswith('audio/')]
             if not audio:
                 continue
+            # Prefer AAC (mp4a) over Opus for better browser compatibility
+            aac = [f for f in audio if 'mp4a' in f.get('mimeType', '')]
             audio.sort(key=lambda f: f.get('bitrate', 0), reverse=True)
-            best = audio[0]
-            stream_url = best.get('url')
+            best = aac[0] if aac else audio[0]
+            stream_url = best.get('url') or _extract_url_from_cipher(best.get('signatureCipher') or best.get('cipher', ''))
             if stream_url:
                 return {
                     'raw_url': stream_url,
@@ -154,15 +156,22 @@ def _extract_innertube(vid):
                     'duration': data.get('videoDetails', {}).get('lengthSeconds', 0),
                     'strategy': f'innertube_{cl["clientName"]}',
                 }
+            # Try next client
         except Exception as e:
             app.logger.warning('innertube %s failed for %s: %s', cl['clientName'], vid, str(e)[:200])
             continue
     return None
 
 
-def _extract_ytdlp(vid):
+def _extract_url_from_cipher(cipher_str):
+    """Extract base URL from signatureCipher/cipher parameter."""
+    if not cipher_str:
+        return None
+    import urllib.parse
+    params = urllib.parse.parse_qs(cipher_str)
+    return params.get('url', [None])[0]
     base_opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[ext=m4a]/bestaudio',
         'quiet': True,
         'no_warnings': True,
         'simulate': True,
@@ -181,7 +190,8 @@ def _extract_ytdlp(vid):
 
     # Keep the list short: each failed client costs memory on the free host.
     strategies = [
-        ('android_vr', {'extractor_args': {'youtube': {'player_client': ['android_vr']}}}),
+        ('default', {}),
+        ('android', {'extractor_args': {'youtube': {'player_client': ['android']}}}),
         ('ios', {'extractor_args': {'youtube': {'player_client': ['ios']}}}),
     ]
     for name, extra in strategies:
