@@ -359,15 +359,4 @@ def after_request(response):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', '5000'))
-    # Self-keepalive thread to prevent cold start
-    def _self_keepalive():
-        import time
-        while True:
-            time.sleep(300)
-            try:
-                req_lib = urllib.request
-                req_lib.urlopen(f'http://127.0.0.1:{port}/api/keepalive', timeout=10)
-            except Exception:
-                pass
-    threading.Thread(target=_self_keepalive, daemon=True).start()
     app.run(host='0.0.0.0', port=port)
