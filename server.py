@@ -98,7 +98,7 @@ def api_preextract():
 
 
 def _extract_innertube(vid):
-    """Direct InnerTube API call — faster than yt-dlp."""
+    """Direct InnerTube API call — faster than yt-dlp. Returns raw URL from cipher (may need signature)."""
     import urllib.request as req_lib
     clients = [
         {'clientName': 'ANDROID_MUSIC', 'clientVersion': '7.27.52', 'api_key': 'AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI'},
@@ -141,7 +141,7 @@ def _extract_innertube(vid):
             audio = [f for f in formats if f.get('mimeType', '').startswith('audio/')]
             if not audio:
                 continue
-            # Prefer AAC (mp4a) over Opus for better browser compatibility
+            # Sort by bitrate, prefer mp4a (AAC)
             aac = [f for f in audio if 'mp4a' in f.get('mimeType', '')]
             audio.sort(key=lambda f: f.get('bitrate', 0), reverse=True)
             best = aac[0] if aac else audio[0]
@@ -156,7 +156,6 @@ def _extract_innertube(vid):
                     'duration': data.get('videoDetails', {}).get('lengthSeconds', 0),
                     'strategy': f'innertube_{cl["clientName"]}',
                 }
-            # Try next client
         except Exception as e:
             app.logger.warning('innertube %s failed for %s: %s', cl['clientName'], vid, str(e)[:200])
             continue
@@ -360,4 +359,15 @@ def after_request(response):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', '5000'))
+    # Self-keepalive thread to prevent cold start
+    def _self_keepalive():
+        import time
+        while True:
+            time.sleep(300)
+            try:
+                req_lib = urllib.request
+                req_lib.urlopen(f'http://127.0.0.1:{port}/api/keepalive', timeout=10)
+            except Exception:
+                pass
+    threading.Thread(target=_self_keepalive, daemon=True).start()
     app.run(host='0.0.0.0', port=port)

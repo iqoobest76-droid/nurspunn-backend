@@ -94,7 +94,7 @@
 
   async function apiGet(path) {
     try {
-      const r = await fetch(BACKEND_URL + path, { signal: AbortSignal.timeout(90000) });
+      const r = await fetch(BACKEND_URL + path, { signal: AbortSignal.timeout(60000) });
       if (r.ok) return await r.json();
     } catch (e) { console.warn('apiGet failed', path, e); }
     return null;
@@ -633,7 +633,18 @@
     function startPlayback(url) {
       streamUrl = url;
       audio.src = url;
+      // Timeout: if neither canplay nor error fires in 30s, stop loading
+      const loadTimeout = setTimeout(() => {
+        audio.removeEventListener('canplay', onReady);
+        audio.removeEventListener('error', onError);
+        btnPlay.classList.remove('is-loading');
+        fsPlay.classList.remove('is-loading');
+        setPlayIcon(false);
+        playing = false;
+        setLoading(t.id, false);
+      }, 30000);
       function onReady() {
+        clearTimeout(loadTimeout);
         audio.removeEventListener('canplay', onReady);
         audio.removeEventListener('error', onError);
         setLoading(t.id, false);
@@ -645,6 +656,7 @@
         });
       }
       function onError() {
+        clearTimeout(loadTimeout);
         audio.removeEventListener('canplay', onReady);
         audio.removeEventListener('error', onError);
         setLoading(t.id, false);
