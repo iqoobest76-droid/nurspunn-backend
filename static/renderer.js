@@ -478,104 +478,122 @@
     });
   }
 
-  // ========== Playback via Piped + HTML5 Audio ==========
-  let streamUrl = '';
-  let loadingStream = false;
-  let audioUnlocked = false;
+  // ========== Web Audio API Playback Engine ==========
 
-  // Unlock audio context on first user gesture
-  function unlockAudio() {
-    if (audioUnlocked) return;
-    try {
-      const silent = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
-      silent.volume = 0;
-      silent.play().then(() => { audioUnlocked = true; silent.remove(); }).catch(() => { silent.remove(); });
-    } catch(e) {}
+  let audioCtx = null;
+  let currentBuffer = null;
+  let currentSource = null;
+  let waPlayStartTime = 0;
+  let waPauseOffset = 0;
+  let waDuration = 0;
+  let waPlaying = false;
+  let waLoading = false;
+  let videoIdForCache = '';
+
+  function getWAContext() {
+    if (!audioCtx) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      audioCtx = new Ctor();
+    }
+    return audioCtx;
   }
-  document.addEventListener('touchstart', unlockAudio, { once: true });
-  document.addEventListener('click', unlockAudio, { once: true });
 
-  audio.addEventListener('loadedmetadata', () => {
-    const dur = audio.duration || 0;
-    if (dur > 0) {
-      tEnd.textContent = fmt(dur);
-      pFill.style.width = '0%';
-      tNow.textContent = '0:00';
-      if (fsPlayer.classList.contains('show')) {
-        fsTimeEnd.textContent = fmt(dur);
-        fsFill.style.width = '0%';
-        fsTimeNow.textContent = '0:00';
+  async function waLoad() {
+    const ctx = getWAContext();
+    if (!ctx || !videoIdForCache) return false;
+    waLoading = true;
+    try {
+      const audioUrl = BACKEND_URL + '/api/audio?id=' + encodeURIComponent(videoIdForCache);
+      const resp = await fetch(audioUrl);
+      if (!resp.ok) { waLoading = false; return false; }
+      const ab = await resp.arrayBuffer();
+      const buf = await ctx.decodeAudioData(ab);
+      currentBuffer = buf;
+      waDuration = buf.duration;
+      waLoading = false;
+      return true;
+    } catch(e) {
+      console.warn('waLoad failed:', e);
+      waLoading = false;
+      return false;
+    }
+  }
+
+  function waPlay() {
+    const ctx = getWAContext();
+    if (!ctx || !currentBuffer) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    if (currentSource) { try { currentSource.stop(); } catch(e) {} currentSource = null; }
+    currentSource = ctx.createBufferSource();
+    currentSource.buffer = currentBuffer;
+    currentSource.connect(ctx.destination);
+    currentSource.start(0, waPauseOffset);
+    waPlayStartTime = ctx.currentTime - waPauseOffset;
+    waPlaying = true;
+    currentSource.onended = () => {
+      if (waPlaying) {
+        waPlaying = false;
+        waPauseOffset = 0;
+        doNext();
       }
+    };
+  }
+
+  function waPause() {
+    if (!waPlaying || !audioCtx || !currentSource) return;
+    waPauseOffset = audioCtx.currentTime - waPlayStartTime;
+    waPlaying = false;
+    try { currentSource.stop(); } catch(e) {}
+    currentSource = null;
+  }
+
+  function waSeek(to) {
+    if (!currentBuffer) return;
+    waPauseOffset = Math.max(0, Math.min(to, waDuration));
+    if (waPlaying) {
+      waPause();
+      waPlay();
     }
-  });
+  }
 
-  // "playing" fires when audio actually starts producing sound
-  audio.addEventListener('playing', () => {
-    playing = true;
-    btnPlay.classList.remove('is-loading');
-    fsPlay.classList.remove('is-loading');
-    setPlayIcon(true);
-    setLoading(idx >= 0 && playlist[idx] ? playlist[idx].id : '', false);
-    try { if (window.AndroidMusic && playlist[idx]) { window.AndroidMusic.updateNotification(playlist[idx].title || 'nurspunn', playlist[idx].channel || 'Playing'); } } catch(e) {}
-  });
+  function waGetTime() {
+    if (!audioCtx || !waPlaying) return Math.min(waPauseOffset, waDuration);
+    return Math.min(audioCtx.currentTime - waPlayStartTime, waDuration);
+  }
 
-  audio.addEventListener('pause', () => {
-    if (!audio.ended) {
-      playing = false;
-      btnPlay.classList.remove('is-loading');
-      fsPlay.classList.remove('is-loading');
-      setPlayIcon(false);
-    }
-  });
+  function waStop() {
+    if (currentSource) { try { currentSource.stop(); } catch(e) {} currentSource = null; }
+    waPlaying = false;
+    waPauseOffset = 0;
+    waPlayStartTime = 0;
+    currentBuffer = null;
+    waDuration = 0;
+    waLoading = false;
+  }
 
-  audio.addEventListener('error', (e) => {
-    console.error('Audio error:', audio.error);
-    btnPlay.classList.remove('is-loading');
-    setPlayIcon(false);
-    playing = false;
-  });
-
-  audio.addEventListener('ended', () => {
-    doNext();
-  });
-
-  audio.addEventListener('timeupdate', () => {
-    if (!playing) return;
-    const cur = audio.currentTime || 0;
-    const dur = audio.duration || 0;
-    if (dur > 0) {
-      pFill.style.width = ((cur / dur) * 100) + '%';
-      tNow.textContent = fmt(cur);
-      if (fsPlayer.classList.contains('show')) {
-        fsFill.style.width = ((cur / dur) * 100) + '%';
-        fsTimeNow.textContent = fmt(cur);
-        fsTimeEnd.textContent = fmt(dur);
-      }
-    }
-    updateSyncedLyrics(cur);
-  });
-
-  audio.addEventListener('waiting', () => {
-    btnPlay.classList.add('is-loading');
-  });
-
-  audio.addEventListener('canplay', () => {
-    btnPlay.classList.remove('is-loading');
-  });
+  function waUnlock() {
+    const ctx = getWAContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+  }
+  document.addEventListener('touchstart', waUnlock, { once: true });
+  document.addEventListener('click', waUnlock, { once: true });
 
   let timeUpdateInterval = null;
   function startTimeUpdate() {
     if (timeUpdateInterval) clearInterval(timeUpdateInterval);
     timeUpdateInterval = setInterval(() => {
-      if (!playing) return;
-      const cur = audio.currentTime || 0;
-      const dur = audio.duration || 0;
+      if (!waPlaying && !waLoading) return;
+      const cur = waGetTime();
+      const dur = waDuration;
       if (dur > 0) {
-        pFill.style.width = ((cur / dur) * 100) + '%';
+        const pct = Math.min((cur / dur) * 100, 100);
+        pFill.style.width = pct + '%';
         tNow.textContent = fmt(cur);
         tEnd.textContent = fmt(dur);
         if (fsPlayer.classList.contains('show')) {
-          fsFill.style.width = ((cur / dur) * 100) + '%';
+          fsFill.style.width = pct + '%';
           fsTimeNow.textContent = fmt(cur);
           fsTimeEnd.textContent = fmt(dur);
         }
@@ -625,65 +643,51 @@
       fetchLyrics(playlist[idx].title, playlist[idx].channel);
     }
     try { if (window.AndroidMusic) { window.AndroidMusic.updateNotification(t.title || 'nurspunn', t.channel || 'Playing music'); } } catch(e) {}
-    // Auto-open fullscreen player
     openFsPlayer();
     btnPlay.classList.add('is-loading');
     fsPlay.classList.add('is-loading');
-    playing = false;
-    audio.pause();
-    audio.src = '';
-    streamUrl = '';
+    waStop();
+    videoIdForCache = t.id;
     setLoading(t.id, true);
+    tEnd.textContent = '';
+    pFill.style.width = '0%';
+    tNow.textContent = '0:00';
+    if (fsPlayer.classList.contains('show')) {
+      fsTimeEnd.textContent = '';
+      fsFill.style.width = '0%';
+      fsTimeNow.textContent = '0:00';
+    }
 
-    getStreamUrl(t.id).then(url => {
+    getStreamUrl(t.id).then(async url => {
       if (idx !== i) return;
-      if (url) {
-        streamUrl = url;
-        audio.src = url;
-        const loadTimeout = setTimeout(() => {
-          audio.removeEventListener('canplay', onReady);
-          audio.removeEventListener('error', onError);
-          btnPlay.classList.remove('is-loading');
-          fsPlay.classList.remove('is-loading');
-          setPlayIcon(false);
-          playing = false;
-          setLoading(t.id, false);
-        }, 60000);
-        function onReady() {
-          clearTimeout(loadTimeout);
-          audio.removeEventListener('canplay', onReady);
-          audio.removeEventListener('error', onError);
-          setLoading(t.id, false);
-          btnPlay.classList.remove('is-loading');
-          fsPlay.classList.remove('is-loading');
-          audio.muted = false;
-          audio.volume = 1;
-          audio.play().catch(e => {
-            console.warn('play() blocked, retrying', e);
-            setTimeout(() => { audio.play().catch(() => {}); }, 400);
-          });
-        }
-        function onError() {
-          clearTimeout(loadTimeout);
-          audio.removeEventListener('canplay', onReady);
-          audio.removeEventListener('error', onError);
-          setLoading(t.id, false);
-          btnPlay.classList.remove('is-loading');
-          fsPlay.classList.remove('is-loading');
-          setPlayIcon(false);
-          playing = false;
-        }
-        audio.addEventListener('canplay', onReady, { once: true });
-        audio.addEventListener('error', onError, { once: true });
-        audio.load();
-      } else {
+      if (!url) {
         btnPlay.classList.remove('is-loading');
         fsPlay.classList.remove('is-loading');
-        setPlayIcon(false);
-        playing = false;
+        waPlaying = false;
         setLoading(t.id, false);
         results.innerHTML = '<div class="empty" style="padding:30px;text-align:center;color:rgba(255,255,255,0.5);font-size:13px">Stream unavailable. Tap again to retry.</div>';
+        return;
       }
+      const ok = await waLoad();
+      if (idx !== i) return;
+      if (!ok) {
+        btnPlay.classList.remove('is-loading');
+        fsPlay.classList.remove('is-loading');
+        waPlaying = false;
+        setLoading(t.id, false);
+        results.innerHTML = '<div class="empty" style="padding:30px;text-align:center;color:rgba(255,255,255,0.5);font-size:13px">Failed to load audio.</div>';
+        return;
+      }
+      setLoading(t.id, false);
+      btnPlay.classList.remove('is-loading');
+      fsPlay.classList.remove('is-loading');
+      if (waDuration > 0) {
+        tEnd.textContent = fmt(waDuration);
+        if (fsPlayer.classList.contains('show')) {
+          fsTimeEnd.textContent = fmt(waDuration);
+        }
+      }
+      waPlay();
     });
     startTimeUpdate();
   }
@@ -696,26 +700,52 @@
   btnPlay.addEventListener('click', () => {
     if (idx === -1 && playlist.length > 0) { play(0); return; }
     if (idx === -1) return;
-    if (playing) {
-      audio.pause();
-    } else {
-      if (audio.src && audio.src !== '' && !audio.paused) {
-        audio.play().catch(() => {});
-      } else if (audio.src && audio.src !== '') {
-        audio.play().catch(() => {});
-      } else {
-        play(idx);
-      }
+    if (waPlaying) {
+      waPause();
+      playing = false;
+      setPlayIcon(false);
+      btnPlay.classList.remove('is-loading');
+      fsPlay.classList.remove('is-loading');
+    } else if (currentBuffer) {
+      waPlay();
+      playing = true;
+      setPlayIcon(true);
+    } else if (idx >= 0 && idx < playlist.length) {
+      play(idx);
     }
   });
   btnNext.addEventListener('click', doNext);
   btnPrev.addEventListener('click', () => {
     if (!playlist.length) return;
-    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+    if (waPlaying && waGetTime() > 3) { waSeek(0); return; }
     play(idx <= 0 ? playlist.length - 1 : idx - 1);
   });
   btnHeart.addEventListener('click', function () { if (idx < 0 || !playlist[idx]) return; toggleFav(playlist[idx]); });
-  pBar.addEventListener('click', e => { const dur = audio.duration || 0; if (!dur) return; const rect = pBar.getBoundingClientRect(); audio.currentTime = ((e.clientX - rect.left) / rect.width) * dur; });
+  pBar.addEventListener('click', e => { if (!waDuration) return; const rect = pBar.getBoundingClientRect(); const to = ((e.clientX - rect.left) / rect.width) * waDuration; waSeek(to); });
+  fsPlay.addEventListener('click', () => {
+    if (idx === -1 && playlist.length > 0) { play(0); return; }
+    if (idx === -1) return;
+    if (waPlaying) {
+      waPause();
+      playing = false;
+      setPlayIcon(false);
+      btnPlay.classList.remove('is-loading');
+      fsPlay.classList.remove('is-loading');
+    } else if (currentBuffer) {
+      waPlay();
+      playing = true;
+      setPlayIcon(true);
+    } else if (idx >= 0 && idx < playlist.length) {
+      play(idx);
+    }
+  });
+  fsNext.addEventListener('click', doNext);
+  fsPrev.addEventListener('click', () => {
+    if (!playlist.length) return;
+    if (waPlaying && waGetTime() > 3) { waSeek(0); return; }
+    play(idx <= 0 ? playlist.length - 1 : idx - 1);
+  });
+  fsProgress.addEventListener('click', e => { if (!waDuration) return; const rect = fsProgress.getBoundingClientRect(); const to = ((e.clientX - rect.left) / rect.width) * waDuration; waSeek(to); });
 
   function showSuggestions(q) {
     if (!searchSuggestions) return;
@@ -945,7 +975,7 @@
         timedLyrics = parseSyncedLyrics(synced);
         if (!timedLyrics.length && plain) timedLyrics = distributePlainLyrics(plain);
         renderFsLyrics(timedLyrics);
-        updateSyncedLyrics(audio.currentTime || 0);
+        updateSyncedLyrics(waGetTime());
       } else {
         if (fsLyricsScroll) fsLyricsScroll.innerHTML = '<div style="color:rgba(255,255,255,0.5);padding:20px">Lyrics not found</div>';
       }
@@ -968,7 +998,7 @@
   function distributePlainLyrics(lyrics) {
     const lines = String(lyrics || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (!lines.length) return [];
-    const dur = audio.duration || Math.max(lines.length * 4, 80);
+    const dur = waDuration || Math.max(lines.length * 4, 80);
     const start = Math.min(8, dur * 0.08);
     const usable = Math.max(dur - start - 6, lines.length * 2.2);
     return lines.map((text, i) => ({ time: start + (usable * i / Math.max(lines.length, 1)), text, approx: true }));
@@ -1029,9 +1059,9 @@
     fsHeart.classList.toggle('liked', liked);
     fsHeart.dataset.id = t.id;
     fsPlayingFrom.textContent = 'nurspunn';
-    setIcon(fsPlay, playing ? 'pause' : 'play');
-    const dur = audio.duration || 0;
-    const cur = audio.currentTime || 0;
+    setIcon(fsPlay, waPlaying ? 'pause' : 'play');
+    const dur = waDuration || 0;
+    const cur = waGetTime();
     if (dur > 0) {
       fsFill.style.width = ((cur / dur) * 100) + '%';
       fsTimeNow.textContent = fmt(cur);
@@ -1090,44 +1120,16 @@
     });
   }
 
-  fsPlay.addEventListener('click', () => {
-    if (idx === -1 && playlist.length > 0) { play(0); return; }
-    if (idx === -1) return;
-    if (playing) {
-      audio.pause();
-    } else {
-      if (audio.src && audio.src !== '') {
-        audio.play().catch(() => {});
-      } else {
-        play(idx);
-      }
-    }
-  });
-
-  fsPrev.addEventListener('click', () => {
-    if (!playlist.length) return;
-    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
-    play(idx <= 0 ? playlist.length - 1 : idx - 1);
-  });
-
-  fsNext.addEventListener('click', doNext);
-
   fsHeart.addEventListener('click', () => { if (idx < 0 || !playlist[idx]) return; toggleFav(playlist[idx]); });
 
-  fsBar.addEventListener('click', e => {
-    const dur = audio.duration || 0;
-    if (!dur) return;
-    const rect = fsBar.getBoundingClientRect();
-    audio.currentTime = ((e.clientX - rect.left) / rect.width) * dur;
-  });
-
   // Gradient animation when playing
-  audio.addEventListener('play', () => {
-    if (fsPlayer.classList.contains('show')) fsBg.classList.add('animating');
-  });
-  audio.addEventListener('pause', () => {
-    fsBg.classList.remove('animating');
-  });
+  let gradientTimer = null;
+  function updateGradientAnim() {
+    if (waPlaying && fsPlayer.classList.contains('show')) fsBg.classList.add('animating');
+    else fsBg.classList.remove('animating');
+  }
+  // Check gradient state periodically
+  setInterval(updateGradientAnim, 500);
 
   // Pull-to-refresh on home
   (function() {

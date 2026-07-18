@@ -7,7 +7,7 @@ import json
 import time
 import threading
 import urllib.request
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, Response, send_from_directory
 import yt_dlp
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -226,6 +226,42 @@ def api_stream():
         'error': 'Audio is temporarily unavailable. Try another song.',
         'detail': f'all extraction methods failed for {vid}',
     }), 503
+
+
+@app.route('/api/audio')
+def api_audio():
+    """Proxy googlevideo URL with CORS headers for Web Audio API playback."""
+    vid = request.args.get('id', '').strip()
+    if not vid:
+        return jsonify({'error': 'missing id'}), 400
+    result = _extract_stream(vid)
+    if not result or not result.get('url'):
+        return jsonify({'error': 'could not extract stream'}), 500
+    url = result['url']
+    headers = {
+        'User-Agent': 'Mozilla/5.0',
+        'Referer': 'https://www.youtube.com/',
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        src = urllib.request.urlopen(req, timeout=30)
+        def generate():
+            while True:
+                chunk = src.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        resp_headers = {
+            'Content-Type': 'audio/mp4',
+            'Access-Control-Allow-Origin': '*',
+            'Content-Disposition': 'inline',
+        }
+        if src.headers.get('Content-Length'):
+            resp_headers['Content-Length'] = src.headers['Content-Length']
+        return Response(generate(), status=src.status, headers=resp_headers)
+    except Exception as e:
+        app.logger.error('audio proxy failed for %s: %s', vid, e)
+        return jsonify({'error': str(e)[:200]}), 500
 
 
 @app.route('/api/search')
