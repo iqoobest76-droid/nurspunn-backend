@@ -82,6 +82,8 @@
   let relatedPlaylist = [];
   let relatedRequestSeq = 0;
   let lastRelatedFor = '';
+  let streamCache = {};
+  let loadingTrackId = '';
 
   async function apiGet(path) {
     try {
@@ -92,10 +94,19 @@
   }
 
   async function getStreamUrl(videoId) {
+    if (streamCache[videoId]) return streamCache[videoId];
     const data = await apiGet('/api/stream?id=' + encodeURIComponent(videoId));
-    if (data && data.proxy_url) return BACKEND_URL + data.proxy_url;
-    if (data && data.url) return data.url;
-    return await clientExtractStream(videoId);
+    let url = null;
+    if (data && data.proxy_url) url = BACKEND_URL + data.proxy_url;
+    else if (data && data.url) url = data.url;
+    else url = await clientExtractStream(videoId);
+    if (url) streamCache[videoId] = url;
+    return url;
+  }
+
+  function preloadStream(videoId) {
+    if (!videoId || streamCache[videoId]) return;
+    getStreamUrl(videoId);
   }
 
   async function clientExtractStream(videoId) {
@@ -209,6 +220,8 @@
     try { favorites = JSON.parse(localStorage.getItem('nurspunn_favs') || '[]'); } catch(e) { favorites = []; }
   }
   loadFavs();
+  // Preload favorites on startup
+  favorites.slice(0, 5).forEach(f => preloadStream(f.id));
   function saveFavs() { localStorage.setItem('nurspunn_favs', JSON.stringify(favorites)); }
   function isFav(id) { return favorites.some(f => f.id === id); }
   function toggleFav(track) {
@@ -660,6 +673,15 @@
     }, 250);
   }
 
+  function setLoading(trackId, isLoading) {
+    loadingTrackId = isLoading ? trackId : '';
+    $$('.ri[data-i], .tr[data-i]').forEach(r => {
+      const n = parseInt(r.getAttribute('data-i'));
+      const inPlaylist = n >= 0 && n < playlist.length && playlist[n] && playlist[n].id === trackId;
+      r.classList.toggle('loading', isLoading && inPlaylist);
+    });
+  }
+
   function play(i) {
     if (i < 0 || i >= playlist.length) return;
     idx = i;
@@ -676,7 +698,6 @@
     btnHeart.textContent = liked ? '\u2665' : '\u2661';
     btnHeart.classList.toggle('liked', liked);
     syncFsPlayer(t, cover, coverFallback);
-    // Save to listening history
     try {
       var hist = JSON.parse(localStorage.getItem('nurspunn_history') || '[]');
       hist = hist.filter(h => h.id !== t.id);
@@ -699,25 +720,43 @@
     audio.pause();
     audio.src = '';
     streamUrl = '';
+    setLoading(t.id, true);
+
+    function startPlayback(url) {
+      streamUrl = url;
+      audio.src = url;
+      audio.load();
+      setLoading(t.id, false);
+      audio.play().then(() => {
+        playing = true;
+        setPlayIcon(true);
+        btnPlay.classList.remove('is-loading');
+      }).catch(e => {
+        console.warn('play() failed, retrying...', e);
+        setTimeout(() => {
+          audio.play().then(() => {
+            playing = true;
+            setPlayIcon(true);
+            btnPlay.classList.remove('is-loading');
+          }).catch(() => {
+            btnPlay.classList.remove('is-loading');
+            setPlayIcon(false);
+            playing = false;
+            setLoading(t.id, false);
+          });
+        }, 300);
+      });
+    }
+
     getStreamUrl(t.id).then(url => {
       if (idx !== i) return;
-      if (url) {
-        streamUrl = url;
-        audio.src = url;
-        audio.load();
-        audio.play().then(() => {
-          playing = true;
-          setPlayIcon(true);
-          btnPlay.classList.remove('is-loading');
-        }).catch(e => {
-          console.warn('play() failed', e);
-          btnPlay.classList.remove('is-loading');
-          setPlayIcon(false);
-          playing = false;
-        });
-      } else {
+      if (url) startPlayback(url);
+      else {
         btnPlay.classList.remove('is-loading');
         setPlayIcon(false);
+        playing = false;
+        setLoading(t.id, false);
+      }
         playing = false;
         alert('Could not load audio stream. Try a different song.');
       }
@@ -735,8 +774,9 @@
     if (idx === -1) return;
     if (playing) { audio.pause(); playing = false; setPlayIcon(false); }
     else {
-      if (audio.src && audio.src !== '') { audio.play().catch(() => {}); playing = true; setPlayIcon(true); }
-      else { play(idx); }
+      if (audio.src && audio.src !== '') {
+        audio.play().then(() => { playing = true; setPlayIcon(true); }).catch(() => { play(idx); });
+      } else { play(idx); }
     }
   });
   btnNext.addEventListener('click', doNext);
@@ -789,6 +829,8 @@
       homeTracks.innerHTML = th;
       bindImageFallback(homeCards);
       bindImageFallback(homeTracks);
+      // Preload first 3 home tracks
+      tracks.slice(0, 3).forEach(t => preloadStream(t.id));
       $$('.card').forEach(c => c.addEventListener('click', function () {
         playlist = homePlaylist.slice();
         showView('search');
@@ -868,6 +910,8 @@
         '<div class="ri-dur"></div></div>';
     }).join('');
     bindImageFallback(results);
+    // Preload first 3 tracks for instant playback
+    arr.slice(0, 3).forEach(t => preloadStream(t.id));
     $$('.ri').forEach(r => r.addEventListener('click', function (e) {
       if (e.target.closest('.ri-heart')) return;
       playlist = sourcePlaylist.slice();
@@ -1060,8 +1104,9 @@
     if (idx === -1) return;
     if (playing) { audio.pause(); playing = false; setPlayIcon(false); }
     else {
-      if (audio.src && audio.src !== '') { audio.play().catch(() => {}); playing = true; setPlayIcon(true); }
-      else { play(idx); }
+      if (audio.src && audio.src !== '') {
+        audio.play().then(() => { playing = true; setPlayIcon(true); }).catch(() => { play(idx); });
+      } else { play(idx); }
     }
     setIcon(fsPlay, playing ? 'pause' : 'play');
   });

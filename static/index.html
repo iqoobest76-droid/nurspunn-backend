@@ -112,17 +112,30 @@
     .search-layout { flex-direction: column; gap: 0; padding: 0 8px 8px !important; }
     .queue-wrap { width: 100% !important; flex: 1; min-height: 200px; border-radius: 12px !important; background: #181818 !important; border: none !important; }
     .queue-list { padding: 0 4px 4px !important; }
-    .ri { padding: 6px 8px !important; gap: 10px !important; border-radius: 8px !important; }
+    .ri { padding: 6px 8px !important; gap: 10px !important; border-radius: 8px !important; position: relative; }
     .ri:active { background: rgba(255,255,255,0.06) !important; }
+    .ri.loading { opacity: 0.6; }
+    .ri.loading::after {
+      content: ''; position: absolute; right: 40px; top: 50%; transform: translateY(-50%);
+      width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #1db954;
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
     .ri-thumb { width: 40px !important; height: 40px !important; border-radius: 6px !important; }
     .ri-title { font-size: 13px !important; font-weight: 500 !important; }
     .ri-channel { font-size: 11px !important; color: rgba(255,255,255,0.5) !important; }
     .ri-heart, .tr-heart { width: 28px !important; height: 28px !important; font-size: 14px !important; border-radius: 50% !important; }
-    .tr { padding: 8px !important; gap: 10px !important; border-radius: 8px !important; }
+    .tr { padding: 8px !important; gap: 10px !important; border-radius: 8px !important; position: relative; }
     .tr:active { background: rgba(255,255,255,0.06) !important; }
+    .tr.loading { opacity: 0.6; }
+    .tr.loading::after {
+      content: ''; position: absolute; right: 40px; top: 50%; transform: translateY(-50%);
+      width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #1db954;
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
     .tr-img { width: 40px !important; height: 40px !important; border-radius: 6px !important; }
     .tr-title { font-size: 13px !important; font-weight: 500 !important; }
     .tr-channel { font-size: 11px !important; color: rgba(255,255,255,0.5) !important; }
+    @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
     .album-wrap { flex: 0 0 auto !important; padding: 0 !important; }
     .album-art { max-width: 220px !important; width: 100%; border-radius: 12px !important; }
     .search-layout.lyrics-active .album-wrap { flex: 0 0 120px !important; }
