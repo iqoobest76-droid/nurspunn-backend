@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#090909">
+  <meta http-equiv="Permissions-Policy" content="geolocation=(), camera=(), microphone=(), midi=(), magnetometer=(), gyroscope=(), accelerometer=()">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>nurspunn</title>
@@ -131,6 +132,8 @@
     }
     .suggestion-chip:active { background: rgba(255,255,255,0.18); }
     .suggestion-chip.hist { background: rgba(29,185,84,0.15); color: #1db954; }
+    .suggestion-chip.yt { background: rgba(255,255,255,0.05); }
+    .suggestion-sub { font-size: 10px; opacity: 0.5; margin-left: 6px; }
     .search-query-bar {
       padding: 4px 0 8px; display: flex; align-items: center; gap: 8px;
     }
@@ -312,9 +315,26 @@
     }
     .fs-play svg { width: 30px; height: 30px; }
     .fs-play:active { transform: scale(0.9); }
+
+    /* Pull-to-refresh */
+    .pull-refresh-indicator {
+      position: fixed; top: 0; left: 50%; transform: translateX(-50%) translateY(-50px);
+      width: 36px; height: 36px; border-radius: 50%;
+      background: #282828; border: 2px solid #1db954;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 999; transition: transform 0.3s ease; opacity: 0;
+    }
+    .pull-refresh-indicator.visible { transform: translateX(-50%) translateY(20px); opacity: 1; }
+    .pull-refresh-indicator.loading .pull-refresh-spinner { animation: spinLoading 0.7s linear infinite; }
+    .pull-refresh-spinner {
+      width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #1db954;
+      border-radius: 50%;
+    }
+    #view-home { overscroll-behavior-y: contain; }
   </style>
 </head>
 <body>
+  <div class="pull-refresh-indicator"><div class="pull-refresh-spinner"></div></div>
   <div class="app">
     <div class="titlebar">
       <div class="titlebar-drag"></div>

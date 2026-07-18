@@ -102,28 +102,22 @@
 
   async function getStreamUrl(videoId) {
     if (streamCache[videoId]) return streamCache[videoId];
-    // Race: server extraction vs client extraction — whoever wins first
-    const serverPromise = apiGet('/api/stream?id=' + encodeURIComponent(videoId)).then(data => {
-      if (data && data.proxy_url) return BACKEND_URL + data.proxy_url;
-      if (data && data.url) return data.url;
-      return null;
-    }).catch(() => null);
-
-    const clientPromise = clientExtractStream(videoId).catch(() => null);
-
-    let url = await Promise.race([serverPromise, clientPromise]);
-    if (!url) url = await serverPromise; // fallback: wait for server
-
-    if (url) {
-      streamCache[videoId] = url;
-      // Persist to localStorage
-      try {
-        const cache = {};
-        Object.keys(streamCache).forEach(k => { cache[k] = { url: streamCache[k], ts: Date.now() }; });
-        localStorage.setItem('nurspunn_stream_cache', JSON.stringify(cache));
-      } catch(e) {}
-    }
-    return url;
+    try {
+      const data = await apiGet('/api/stream?id=' + encodeURIComponent(videoId));
+      let url = null;
+      if (data && data.proxy_url) url = BACKEND_URL + data.proxy_url;
+      else if (data && data.url) url = data.url;
+      if (url) {
+        streamCache[videoId] = url;
+        try {
+          const cache = {};
+          Object.keys(streamCache).forEach(k => { cache[k] = { url: streamCache[k], ts: Date.now() }; });
+          localStorage.setItem('nurspunn_stream_cache', JSON.stringify(cache));
+        } catch(e) {}
+        return url;
+      }
+    } catch(e) { console.warn('getStreamUrl server failed', e); }
+    return null;
   }
 
   function preloadStream(videoId) {
@@ -438,7 +432,7 @@
             } else if (navStack.length > 0) {
               var prev = navStack.pop();
               currentViewName = '';
-              if (prev === 'home') { loadHome(); showView('home', true); }
+              if (prev === 'home') { showView('home', true); }
               else if (prev === 'search') { showView('search', true); }
               else if (prev === 'fav') { showView('fav', true); }
               else if (prev === 'ai') { showView('ai', true); }
@@ -471,7 +465,7 @@
       } else if (navStack.length > 0) {
         var prev = navStack.pop();
         currentViewName = '';
-        if (prev === 'home') { loadHome(); showView('home', true); }
+        if (prev === 'home') { showView('home', true); }
         else if (prev === 'search') { showView('search', true); }
         else if (prev === 'fav') { showView('fav', true); }
         else if (prev === 'ai') { showView('ai', true); }
@@ -485,7 +479,7 @@
       } else if (e.state && e.state.view) {
         currentViewName = '';
         var v = e.state.view;
-        if (v === 'home') { loadHome(); showView('home', true); }
+        if (v === 'home') { showView('home', true); }
         else if (v === 'search') { showView('search', true); }
         else if (v === 'fav') { showView('fav', true); }
         else if (v === 'ai') { showView('ai', true); }
@@ -493,7 +487,7 @@
       } else if (navStack.length > 0) {
         var prev = navStack.pop();
         currentViewName = '';
-        if (prev === 'home') { loadHome(); showView('home', true); }
+        if (prev === 'home') { showView('home', true); }
         else if (prev === 'search') { showView('search', true); }
         else if (prev === 'fav') { showView('fav', true); }
         else if (prev === 'ai') { showView('ai', true); }
@@ -510,13 +504,12 @@
     } else if (navStack.length > 0) {
       var prev = navStack.pop();
       currentViewName = '';
-      if (prev === 'home') { loadHome(); showView('home', true); }
+      if (prev === 'home') { showView('home', true); }
       else if (prev === 'search') { showView('search', true); }
       else if (prev === 'fav') { showView('fav', true); }
       else if (prev === 'ai') { showView('ai', true); }
       else { showView('home', true); }
     }
-    // Return value tells Java if we handled it
     return navStack.length > 0 || (fsPlayer && fsPlayer.classList.contains('show'));
   };
 
@@ -847,17 +840,37 @@
         suggestions.push({ title: t.title, channel: t.channel, type: 'fav' });
       }
     });
-    // Common search patterns
-    const common = ['phonk', 'rap', 'pop', 'kpop', 'rock', 'edm', 'jazz', 'lofi', 'classical', 'r&b', 'indie', 'metal'];
-    common.forEach(g => {
-      if (g.includes(lower) || lower.includes(g)) {
-        suggestions.push({ title: g + ' music', channel: 'genre', type: 'genre' });
-      }
+    // Fetch YouTube autocomplete suggestions
+    fetch('https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=' + encodeURIComponent(q), {
+      signal: AbortSignal.timeout(3000)
+    }).then(r => r.text()).then(txt => {
+      try {
+        const match = txt.match(/\[(\[.*?\])\]/);
+        if (match) {
+          const arr = JSON.parse(match[1]);
+          arr.forEach(item => {
+            const title = Array.isArray(item) ? item[0] : (item || '');
+            if (title && !suggestions.some(s => s.title.toLowerCase() === title.toLowerCase())) {
+              suggestions.push({ title: title, channel: 'YouTube', type: 'yt' });
+            }
+          });
+        }
+      } catch(e) {}
+      renderSuggestionsList(suggestions, q);
+    }).catch(() => {
+      renderSuggestionsList(suggestions, q);
     });
+    // Show local suggestions immediately while YouTube loads
+    renderSuggestionsList(suggestions, q);
+  }
+
+  function renderSuggestionsList(suggestions, q) {
+    if (!searchSuggestions) return;
     if (!suggestions.length) { searchSuggestions.innerHTML = ''; searchSuggestions.style.display = 'none'; return; }
     searchSuggestions.style.display = 'flex';
-    searchSuggestions.innerHTML = suggestions.slice(0, 8).map(s =>
-      '<button class="suggestion-chip' + (s.type === 'hist' ? ' hist' : '') + '" data-q="' + esc(s.title) + '">' + esc(s.title) + '</button>'
+    searchSuggestions.innerHTML = suggestions.slice(0, 10).map(s =>
+      '<button class="suggestion-chip' + (s.type === 'hist' ? ' hist' : '') + (s.type === 'yt' ? ' yt' : '') + '" data-q="' + esc(s.title) + '">' +
+      esc(s.title) + (s.channel ? '<span class="suggestion-sub">' + esc(s.channel) + '</span>' : '') + '</button>'
     ).join('');
     searchSuggestions.querySelectorAll('.suggestion-chip').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -1222,6 +1235,48 @@
   audio.addEventListener('pause', () => {
     fsBg.classList.remove('animating');
   });
+
+  // Pull-to-refresh on home
+  (function() {
+    const indicator = document.querySelector('.pull-refresh-indicator');
+    const spinner = indicator ? indicator.querySelector('.pull-refresh-spinner') : null;
+    if (!indicator || !vHome) return;
+    let startY = 0, pulling = false, refreshing = false;
+    vHome.addEventListener('touchstart', function(e) {
+      if (refreshing) return;
+      if (vHome.scrollTop > 5) return;
+      startY = e.touches[0].clientY;
+      pulling = true;
+    }, { passive: true });
+    vHome.addEventListener('touchmove', function(e) {
+      if (!pulling || refreshing) return;
+      const diff = e.touches[0].clientY - startY;
+      if (diff > 20 && vHome.scrollTop <= 0) {
+        indicator.classList.add('visible');
+      } else {
+        indicator.classList.remove('visible');
+      }
+    }, { passive: true });
+    vHome.addEventListener('touchend', function() {
+      if (!pulling) return;
+      pulling = false;
+      if (indicator.classList.contains('visible') && !refreshing) {
+        refreshing = true;
+        indicator.classList.add('loading');
+        loadHome();
+        const checkDone = setInterval(() => {
+          if (homeCards && !homeCards.querySelector('.skeleton-grid') && homeCards.children.length > 0) {
+            clearInterval(checkDone);
+            indicator.classList.remove('visible', 'loading');
+            refreshing = false;
+          }
+        }, 500);
+        setTimeout(() => { clearInterval(checkDone); indicator.classList.remove('visible', 'loading'); refreshing = false; }, 15000);
+      } else {
+        indicator.classList.remove('visible');
+      }
+    }, { passive: true });
+  })();
 
   // Keep server alive — ping every 4 minutes to prevent Render cold start
   setInterval(() => {
