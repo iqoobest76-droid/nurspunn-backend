@@ -120,14 +120,6 @@
         return url;
       }
     } catch(e) { console.warn('getStreamUrl server failed', e); }
-    // Render/other cloud IPs can be blocked by YouTube. The browser fallback
-    // asks YouTube from the listener's own network, so it remains usable
-    // without making the PWA depend on a private server cookie.
-    const clientUrl = await clientExtractStream(videoId);
-    if (clientUrl) {
-      streamCache[videoId] = clientUrl;
-      return clientUrl;
-    }
     return null;
   }
 
@@ -727,6 +719,25 @@
     });
   }
 
+  function openYouTubeFallback(track) {
+    const previous = document.getElementById('yt-fallback');
+    if (previous) previous.remove();
+    const fallback = document.createElement('div');
+    fallback.id = 'yt-fallback';
+    fallback.className = 'yt-fallback';
+    const videoId = encodeURIComponent(track.id || '');
+    fallback.innerHTML =
+      '<div class="yt-fallback-head"><span>Playing from YouTube</span><button type="button" aria-label="Close">×</button></div>' +
+      '<iframe title="YouTube player" src="https://www.youtube-nocookie.com/embed/' + videoId + '?autoplay=1&playsinline=1&rel=0" ' +
+      'allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>';
+    fsPlayer.appendChild(fallback);
+    fallback.querySelector('button').addEventListener('click', () => fallback.remove());
+    setLoading(track.id, false);
+    btnPlay.classList.remove('is-loading');
+    fsPlay.classList.remove('is-loading');
+    pArtist.textContent = track.channel || 'YouTube';
+  }
+
   function play(i) {
     if (i < 0 || i >= playlist.length) return;
     idx = i;
@@ -798,9 +809,11 @@
       if (url) startPlayback(url);
       else {
         btnPlay.classList.remove('is-loading');
+        fsPlay.classList.remove('is-loading');
         setPlayIcon(false);
         playing = false;
         setLoading(t.id, false);
+        openYouTubeFallback(t);
       }
     });
     startTimeUpdate();
