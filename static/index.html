@@ -110,6 +110,21 @@
     .content { padding-bottom: 52px !important; }
 
     .search-layout { flex-direction: column; gap: 0; padding: 0 8px 8px !important; }
+    .search-results-wrap { padding: 0 8px 8px; }
+    .search-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; }
+    .suggestion-chip {
+      padding: 6px 14px; border-radius: 20px; background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.8); font-size: 12px; font-weight: 500;
+      border: none; cursor: pointer; transition: background 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .suggestion-chip:active { background: rgba(255,255,255,0.18); }
+    .suggestion-chip.hist { background: rgba(29,185,84,0.15); color: #1db954; }
+    .search-query-bar {
+      padding: 4px 0 8px; display: flex; align-items: center; gap: 8px;
+    }
+    .search-query-label { font-size: 13px; font-weight: 600; color: #fff; }
+    .search-query-text { font-size: 13px; color: rgba(255,255,255,0.5); }
     .queue-wrap { width: 100% !important; flex: 1; min-height: 200px; border-radius: 12px !important; background: #181818 !important; border: none !important; }
     .queue-list { padding: 0 4px 4px !important; }
     .ri { padding: 6px 8px !important; gap: 10px !important; border-radius: 8px !important; position: relative; }
@@ -198,8 +213,46 @@
       border-radius: 12px; overflow: hidden;
       box-shadow: 0 20px 60px rgba(0,0,0,0.6);
       background: #222;
+      transition: transform 0.4s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.4s ease;
+    }
+    .fs-art.lyrics-mode {
+      transform: scale(0.85) translateY(-10px);
+      opacity: 0.3;
+      pointer-events: none;
     }
     .fs-art img { width: 100%; height: 100%; object-fit: cover; }
+    .fs-lyrics-overlay {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      padding: 20px 32px; opacity: 0; pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+    .fs-lyrics-overlay.visible {
+      opacity: 1; pointer-events: auto;
+    }
+    .fs-lyrics-scroll {
+      width: 100%; max-width: 320px; max-height: 100%; overflow-y: auto;
+      text-align: center; -webkit-overflow-scrolling: touch;
+      mask-image: linear-gradient(transparent, black 15%, black 85%, transparent);
+      -webkit-mask-image: linear-gradient(transparent, black 15%, black 85%, transparent);
+    }
+    .fs-lyric-line {
+      font-size: 18px; font-weight: 600; color: rgba(255,255,255,0.3);
+      padding: 6px 0; transition: color 0.3s ease, transform 0.3s ease;
+      line-height: 1.4;
+    }
+    .fs-lyric-line.active { color: #fff; transform: scale(1.05); }
+    .fs-lyric-line.near { color: rgba(255,255,255,0.7); }
+    .fs-lyrics-btn {
+      position: absolute; bottom: 16px; right: 16px;
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 20px;
+      background: rgba(255,255,255,0.15); backdrop-filter: blur(10px);
+      color: #fff; font-size: 12px; font-weight: 600;
+      border: none; cursor: pointer; z-index: 3;
+      transition: background 0.2s;
+    }
+    .fs-lyrics-btn:active { background: rgba(255,255,255,0.25); }
+    .fs-lyrics-btn.active { background: rgba(29,185,84,0.3); color: #1db954; }
     .fs-info {
       padding: 24px 24px 0; position: relative; z-index: 2;
       display: flex; align-items: center; justify-content: space-between;
@@ -281,25 +334,13 @@
         </div>
 
         <div class="content hidden" id="view-search">
-          <div class="search-layout">
-            <div class="album-wrap">
-              <div class="album-bg" id="album-bg"></div>
-              <div class="album-art" id="album-art">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="#333"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-              </div>
+          <div class="search-results-wrap">
+            <div class="search-suggestions" id="search-suggestions"></div>
+            <div class="search-query-bar" id="search-query-bar">
+              <span class="search-query-label">Results</span>
+              <span class="search-query-text" id="queue-query"></span>
             </div>
-            <div class="queue-wrap">
-              <div class="queue-meta" style="padding:6px 12px 0;font-size:11px">
-                <span class="queue-label">Results</span>
-                <span class="queue-query" id="queue-query"></span>
-              </div>
-              <div class="queue-tabs" style="padding:2px 10px 0">
-                <button class="queue-tab active" data-tab="results" data-i18n="results">Results</button>
-                <button class="queue-tab" data-tab="lyrics" data-i18n="lyrics">Lyrics</button>
-              </div>
-              <div class="queue-list" id="results"><div class="empty" data-i18n="searchPlaceholder">Search for songs</div></div>
-              <div class="queue-list hidden" id="lyrics-view"><div class="empty" data-i18n="lyricsUnavailable">Lyrics unavailable</div></div>
-            </div>
+            <div class="queue-list" id="results"><div class="empty" data-i18n="searchPlaceholder">Search for songs</div></div>
           </div>
         </div>
 
@@ -341,8 +382,15 @@
         <span class="fs-label" id="fs-playing-from"></span>
         <button class="fs-more" aria-label="More">...</button>
       </div>
-      <div class="fs-art-wrap">
+      <div class="fs-art-wrap" id="fs-art-wrap">
         <div class="fs-art" id="fs-art"></div>
+        <div class="fs-lyrics-overlay" id="fs-lyrics-overlay">
+          <div class="fs-lyrics-scroll" id="fs-lyrics-scroll"></div>
+        </div>
+        <button class="fs-lyrics-btn" id="fs-lyrics-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zM8 15h8v2H8v-2zm0-4h8v2H8v-2z"/></svg>
+          Lyrics
+        </button>
       </div>
       <div class="fs-info">
         <div class="fs-title" id="fs-title"></div>
