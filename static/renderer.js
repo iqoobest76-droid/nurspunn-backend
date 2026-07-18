@@ -329,7 +329,7 @@
   function setIcon(el, name) { if (el && ICONS[name]) el.innerHTML = ICONS[name]; }
   function setPlayIcon(isPlaying) {
     setIcon(btnPlay, isPlaying ? 'pause' : 'play');
-    if (fsPlayer.classList.contains('show')) setIcon(fsPlay, isPlaying ? 'pause' : 'play');
+    setIcon(fsPlay, isPlaying ? 'pause' : 'play');
   }
   function youtubeThumb(id, q) { return id ? 'https://i.ytimg.com/vi/' + id + '/' + (q || 'maxresdefault') + '.jpg' : ''; }
   function bestThumb(t) { return youtubeThumb(t && t.id) || (t && t.thumbnail) || ''; }
@@ -601,12 +601,14 @@
     playing = true;
     setPlayIcon(true);
     btnPlay.classList.remove('is-loading');
+    setLoading(idx >= 0 && playlist[idx] ? playlist[idx].id : '', false);
     try { if (window.AndroidMusic && playlist[idx]) { window.AndroidMusic.updateNotification(playlist[idx].title || 'nurspunn', playlist[idx].channel || 'Playing'); } } catch(e) {}
   });
 
   audio.addEventListener('pause', () => {
-    if (!audio.ended && audio.currentTime > 0 && audio.currentTime < audio.duration) {
-      // Real pause, not end-of-track
+    if (!audio.ended) {
+      playing = false;
+      setPlayIcon(false);
     }
   });
 
@@ -707,6 +709,8 @@
       fetchLyrics(playlist[idx].title, playlist[idx].channel);
     }
     try { if (window.AndroidMusic) { window.AndroidMusic.updateNotification(t.title || 'nurspunn', t.channel || 'Playing music'); } } catch(e) {}
+    // Auto-open fullscreen player
+    openFsPlayer();
     btnPlay.classList.add('is-loading');
     setPlayIcon(false);
     playing = false;
@@ -718,40 +722,24 @@
     function startPlayback(url) {
       streamUrl = url;
       audio.src = url;
-      // Wait for canplay before playing — ensures audio is ready
-      function onCanPlay() {
-        audio.removeEventListener('canplay', onCanPlay);
+      function onReady() {
+        audio.removeEventListener('canplay', onReady);
         audio.removeEventListener('error', onError);
         setLoading(t.id, false);
-        audio.play().then(() => {
-          playing = true;
-          setPlayIcon(true);
-          btnPlay.classList.remove('is-loading');
-        }).catch(e => {
-          console.warn('play() retrying...', e);
-          setTimeout(() => {
-            audio.play().then(() => {
-              playing = true;
-              setPlayIcon(true);
-              btnPlay.classList.remove('is-loading');
-            }).catch(() => {
-              btnPlay.classList.remove('is-loading');
-              setPlayIcon(false);
-              playing = false;
-              setLoading(t.id, false);
-            });
-          }, 500);
+        audio.play().catch(e => {
+          console.warn('play() blocked, retrying', e);
+          setTimeout(() => { audio.play().catch(() => {}); }, 400);
         });
       }
       function onError() {
-        audio.removeEventListener('canplay', onCanPlay);
+        audio.removeEventListener('canplay', onReady);
         audio.removeEventListener('error', onError);
         setLoading(t.id, false);
         btnPlay.classList.remove('is-loading');
         setPlayIcon(false);
         playing = false;
       }
-      audio.addEventListener('canplay', onCanPlay, { once: true });
+      audio.addEventListener('canplay', onReady, { once: true });
       audio.addEventListener('error', onError, { once: true });
       audio.load();
     }
@@ -777,11 +765,16 @@
   btnPlay.addEventListener('click', () => {
     if (idx === -1 && playlist.length > 0) { play(0); return; }
     if (idx === -1) return;
-    if (playing) { audio.pause(); playing = false; setPlayIcon(false); }
-    else {
-      if (audio.src && audio.src !== '') {
-        audio.play().then(() => { playing = true; setPlayIcon(true); }).catch(() => { play(idx); });
-      } else { play(idx); }
+    if (playing) {
+      audio.pause();
+    } else {
+      if (audio.src && audio.src !== '' && !audio.paused) {
+        audio.play().catch(() => {});
+      } else if (audio.src && audio.src !== '') {
+        audio.play().catch(() => {});
+      } else {
+        play(idx);
+      }
     }
   });
   btnNext.addEventListener('click', doNext);
@@ -845,7 +838,6 @@
         const fi = parseInt(this.getAttribute('data-i'));
         playlist = favorites.map(track => ({ ...track }));
         idx = -1;
-        showView('search');
         play(fi);
       });
     });
@@ -873,15 +865,11 @@
       tracks.slice(0, 3).forEach(t => preloadStream(t.id));
       $$('.card').forEach(c => c.addEventListener('click', function () {
         playlist = homePlaylist.slice();
-        showView('search');
-        renderSide();
         play(parseInt(this.getAttribute('data-i')));
       }));
       $$('.tr').forEach(r => r.addEventListener('click', function (e) {
         if (e.target.closest('.tr-heart')) return;
         playlist = homePlaylist.slice();
-        showView('search');
-        renderSide();
         play(parseInt(this.getAttribute('data-i')));
       }));
       $$('.tr-heart').forEach(h => h.addEventListener('click', function (e) {
@@ -1116,6 +1104,7 @@
   }
 
   function openFsPlayer() {
+    if (fsPlayer.classList.contains('show')) return;
     syncFsPlayer();
     fsPlayer.classList.add('show');
     document.body.style.overflow = 'hidden';
@@ -1153,13 +1142,15 @@
   fsPlay.addEventListener('click', () => {
     if (idx === -1 && playlist.length > 0) { play(0); return; }
     if (idx === -1) return;
-    if (playing) { audio.pause(); playing = false; setPlayIcon(false); }
-    else {
+    if (playing) {
+      audio.pause();
+    } else {
       if (audio.src && audio.src !== '') {
-        audio.play().then(() => { playing = true; setPlayIcon(true); }).catch(() => { play(idx); });
-      } else { play(idx); }
+        audio.play().catch(() => {});
+      } else {
+        play(idx);
+      }
     }
-    setIcon(fsPlay, playing ? 'pause' : 'play');
   });
 
   fsPrev.addEventListener('click', () => {
