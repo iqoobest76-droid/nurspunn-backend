@@ -84,6 +84,9 @@
   let lastRelatedFor = '';
   let streamCache = {};
   let loadingTrackId = '';
+  // Render's free server cannot extract dozens of streams in parallel.
+  // Extract only the track the listener selected.
+  const PREFETCH_STREAMS = false;
   // Restore stream cache from localStorage
   try {
     const saved = JSON.parse(localStorage.getItem('nurspunn_stream_cache') || '{}');
@@ -117,10 +120,19 @@
         return url;
       }
     } catch(e) { console.warn('getStreamUrl server failed', e); }
+    // Render/other cloud IPs can be blocked by YouTube. The browser fallback
+    // asks YouTube from the listener's own network, so it remains usable
+    // without making the PWA depend on a private server cookie.
+    const clientUrl = await clientExtractStream(videoId);
+    if (clientUrl) {
+      streamCache[videoId] = clientUrl;
+      return clientUrl;
+    }
     return null;
   }
 
   function preloadStream(videoId) {
+    if (!PREFETCH_STREAMS) return;
     if (!videoId || streamCache[videoId]) return;
     getStreamUrl(videoId);
   }
@@ -129,6 +141,7 @@
   let _preextractTimer = null;
   let _preextractQueue = [];
   function serverPreextract(videoIds) {
+    if (!PREFETCH_STREAMS) return;
     _preextractQueue.push(...videoIds.filter(id => id && !streamCache[id]));
     clearTimeout(_preextractTimer);
     _preextractTimer = setTimeout(() => {
