@@ -91,8 +91,8 @@
     keys.forEach(k => {
       if (saved[k] && saved[k].ts && Date.now() - saved[k].ts < 7200000) {
         const val = saved[k].url;
-        // Support both old (string URL) and new (object {direct, proxy}) formats
-        streamCache[k] = typeof val === 'string' ? { proxy: val, direct: null } : val;
+        // Support both old (object) and new (string) cache formats
+        streamCache[k] = typeof val === 'object' ? (val.direct || val.proxy || '') : val;
       }
     });
   } catch(e) {}
