@@ -745,7 +745,7 @@
     if (waPlaying && waGetTime() > 3) { waSeek(0); return; }
     play(idx <= 0 ? playlist.length - 1 : idx - 1);
   });
-  fsProgress.addEventListener('click', e => { if (!waDuration) return; const rect = fsProgress.getBoundingClientRect(); const to = ((e.clientX - rect.left) / rect.width) * waDuration; waSeek(to); });
+  fsBar.addEventListener('click', e => { if (!waDuration) return; const rect = fsBar.getBoundingClientRect(); const to = ((e.clientX - rect.left) / rect.width) * waDuration; waSeek(to); });
 
   function showSuggestions(q) {
     if (!searchSuggestions) return;
