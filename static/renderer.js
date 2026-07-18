@@ -27,7 +27,6 @@
   const tEnd = $('#time-end');
   const pBar = $('#p-bar');
   const pFill = $('#p-fill');
-  const volume = $('#volume');
   const queueQuery = $('#queue-query');
   const navHome = $('#nav-home');
   const navFav = $('#nav-fav');
@@ -54,7 +53,6 @@
   const fsPlay = $('#fs-play');
   const fsPrev = $('#fs-prev');
   const fsNext = $('#fs-next');
-  const fsVol = $('#fs-vol');
   const fsPlayingFrom = $('#fs-playing-from');
   const playerBar = $('#player-bar');
 
@@ -222,8 +220,8 @@
     try { favorites = JSON.parse(localStorage.getItem('nurspunn_favs') || '[]'); } catch(e) { favorites = []; }
   }
   loadFavs();
-  // Preload favorites on startup
-  favorites.slice(0, 5).forEach(f => preloadStream(f.id));
+  // Preload favorites on startup — ALL of them for instant playback
+  favorites.forEach(f => preloadStream(f.id));
   function saveFavs() { localStorage.setItem('nurspunn_favs', JSON.stringify(favorites)); }
   function isFav(id) { return favorites.some(f => f.id === id); }
   function toggleFav(track) {
@@ -326,8 +324,7 @@
     play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5-10-6.5z"/></svg>',
     pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7V5zm6 0h4v14h-4V5z"/></svg>',
     prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 6.5 10 12l5.5 5.5-1.8 1.8L6.4 12l7.3-7.3 1.8 1.8z"/></svg>',
-    next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 17.5 5.5-5.5-5.5-5.5 1.8-1.8 7.3 7.3-7.3 7.3-1.8-1.8z"/></svg>',
-    volume: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4zm12.4-.9-1.3 1.3A3.6 3.6 0 0 1 16 12c0 1-.4 1.9-.9 2.6l1.3 1.3A5.5 5.5 0 0 0 18 12c0-1.5-.6-2.9-1.6-3.9z"/></svg>'
+    next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 17.5 5.5-5.5-5.5-5.5 1.8-1.8 7.3 7.3-7.3 7.3-1.8-1.8z"/></svg>'
   };
   function setIcon(el, name) { if (el && ICONS[name]) el.innerHTML = ICONS[name]; }
   function setPlayIcon(isPlaying) {
@@ -361,8 +358,6 @@
   setIcon(btnPrev, 'prev');
   setIcon(btnNext, 'next');
   setPlayIcon(false);
-  const volIcon = document.querySelector('.vol-icon');
-  if (volIcon) volIcon.innerHTML = ICONS.volume;
 
   navHome.addEventListener('click', e => { e.preventDefault(); navStack = []; currentViewName = ''; loadHome(); showView('home'); });
   navFav.addEventListener('click', () => showView('fav'));
@@ -723,27 +718,42 @@
     function startPlayback(url) {
       streamUrl = url;
       audio.src = url;
-      audio.load();
-      setLoading(t.id, false);
-      audio.play().then(() => {
-        playing = true;
-        setPlayIcon(true);
+      // Wait for canplay before playing — ensures audio is ready
+      function onCanPlay() {
+        audio.removeEventListener('canplay', onCanPlay);
+        audio.removeEventListener('error', onError);
+        setLoading(t.id, false);
+        audio.play().then(() => {
+          playing = true;
+          setPlayIcon(true);
+          btnPlay.classList.remove('is-loading');
+        }).catch(e => {
+          console.warn('play() retrying...', e);
+          setTimeout(() => {
+            audio.play().then(() => {
+              playing = true;
+              setPlayIcon(true);
+              btnPlay.classList.remove('is-loading');
+            }).catch(() => {
+              btnPlay.classList.remove('is-loading');
+              setPlayIcon(false);
+              playing = false;
+              setLoading(t.id, false);
+            });
+          }, 500);
+        });
+      }
+      function onError() {
+        audio.removeEventListener('canplay', onCanPlay);
+        audio.removeEventListener('error', onError);
+        setLoading(t.id, false);
         btnPlay.classList.remove('is-loading');
-      }).catch(e => {
-        console.warn('play() failed, retrying...', e);
-        setTimeout(() => {
-          audio.play().then(() => {
-            playing = true;
-            setPlayIcon(true);
-            btnPlay.classList.remove('is-loading');
-          }).catch(() => {
-            btnPlay.classList.remove('is-loading');
-            setPlayIcon(false);
-            playing = false;
-            setLoading(t.id, false);
-          });
-        }, 300);
-      });
+        setPlayIcon(false);
+        playing = false;
+      }
+      audio.addEventListener('canplay', onCanPlay, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+      audio.load();
     }
 
     getStreamUrl(t.id).then(url => {
@@ -782,7 +792,6 @@
   });
   btnHeart.addEventListener('click', function () { if (idx < 0 || !playlist[idx]) return; toggleFav(playlist[idx]); });
   pBar.addEventListener('click', e => { const dur = audio.duration || 0; if (!dur) return; const rect = pBar.getBoundingClientRect(); audio.currentTime = ((e.clientX - rect.left) / rect.width) * dur; });
-  volume.addEventListener('input', function () { audio.volume = Math.max(0, Math.min(1, parseFloat(this.value) || 0)); });
 
   function showSuggestions(q) {
     if (!searchSuggestions) return;
@@ -1134,6 +1143,7 @@
       fsLyricsBtn.classList.toggle('active', fsLyricsActive);
       fsArt.classList.toggle('lyrics-mode', fsLyricsActive);
       fsLyricsOverlay.classList.toggle('visible', fsLyricsActive);
+      if (fsBg) fsBg.classList.toggle('lyrics-bg', fsLyricsActive);
       if (fsLyricsActive && idx >= 0 && playlist[idx]) {
         fetchLyrics(playlist[idx].title, playlist[idx].channel);
       }
@@ -1167,18 +1177,6 @@
     if (!dur) return;
     const rect = fsBar.getBoundingClientRect();
     audio.currentTime = ((e.clientX - rect.left) / rect.width) * dur;
-  });
-
-  fsVol.addEventListener('input', function() {
-    const v = Math.max(0, Math.min(1, parseFloat(this.value) || 0));
-    audio.volume = v;
-    volume.value = v;
-  });
-
-  volume.addEventListener('input', function() {
-    const v = Math.max(0, Math.min(1, parseFloat(this.value) || 0));
-    audio.volume = v;
-    fsVol.value = v;
   });
 
   // Gradient animation when playing
