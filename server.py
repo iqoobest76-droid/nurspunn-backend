@@ -35,6 +35,12 @@ def _cache_set(key, val):
         _cache[key] = (time.time(), val)
 
 
+# Stream pre-extraction is intentionally disabled on Render's free 512 MB
+# instance. Starting ten yt-dlp processes at once makes the service run out of
+# memory and then every play request remains on loading.
+PREEXTRACT_ENABLED = os.environ.get('PREEXTRACT_ENABLED') == '1'
+
+
 # Background stream pre-extraction
 def _preextract_stream(vid):
     """Extract stream URL in background thread for instant playback later."""
@@ -80,6 +86,8 @@ def api_keepalive():
 @app.route('/api/preextract')
 def api_preextract():
     """Pre-extract stream URLs for given video IDs in background."""
+    if not PREEXTRACT_ENABLED:
+        return jsonify({'status': 'disabled'})
     ids = request.args.get('ids', '').strip()
     if not ids:
         return jsonify({'status': 'no ids'})
@@ -108,12 +116,10 @@ def _extract_ytdlp(vid):
     if os.path.exists(COOKIES_FILE):
         base_opts['cookiefile'] = COOKIES_FILE
 
+    # Keep the list short: each failed client costs memory on the free host.
     strategies = [
-        ('default', {}),
-        ('web_creator', {'extractor_args': {'youtube': {'player_client': ['web_creator']}}}),
-        ('android', {'extractor_args': {'youtube': {'player_client': ['android']}}}),
+        ('android_vr', {'extractor_args': {'youtube': {'player_client': ['android_vr']}}}),
         ('ios', {'extractor_args': {'youtube': {'player_client': ['ios']}}}),
-        ('tv_embedded', {'extractor_args': {'youtube': {'player_client': ['tv_embedded']}}}),
     ]
     for name, extra in strategies:
         try:
@@ -158,7 +164,10 @@ def api_stream():
         _cache_set(cache_key, result)
         return jsonify(result)
 
-    return jsonify({'error': f'all extraction methods failed for {vid}'}), 500
+    return jsonify({
+        'error': 'Audio is temporarily unavailable. Try another song.',
+        'detail': f'all extraction methods failed for {vid}',
+    }), 503
 
 
 @app.route('/api/proxy')
@@ -257,11 +266,13 @@ def api_search():
     except Exception as e:
         app.logger.error('search failed: %s', e)
     _cache_set(cache_key, items)
-    # Pre-extract stream URLs in background for instant playback
-    for item in items[:10]:
-        vid = item.get('id', '')
-        if vid:
-            threading.Thread(target=_preextract_stream, args=(vid,), daemon=True).start()
+    # Do not launch yt-dlp work for every result on the free server. The
+    # selected song is extracted only when the user actually presses Play.
+    if PREEXTRACT_ENABLED:
+        for item in items[:2]:
+            vid = item.get('id', '')
+            if vid:
+                threading.Thread(target=_preextract_stream, args=(vid,), daemon=True).start()
     return jsonify({'items': items})
 
 
