@@ -102,11 +102,18 @@
 
   async function getStreamUrl(videoId) {
     if (streamCache[videoId]) return streamCache[videoId];
-    const data = await apiGet('/api/stream?id=' + encodeURIComponent(videoId));
-    let url = null;
-    if (data && data.proxy_url) url = BACKEND_URL + data.proxy_url;
-    else if (data && data.url) url = data.url;
-    else url = await clientExtractStream(videoId);
+    // Race: server extraction vs client extraction — whoever wins first
+    const serverPromise = apiGet('/api/stream?id=' + encodeURIComponent(videoId)).then(data => {
+      if (data && data.proxy_url) return BACKEND_URL + data.proxy_url;
+      if (data && data.url) return data.url;
+      return null;
+    }).catch(() => null);
+
+    const clientPromise = clientExtractStream(videoId).catch(() => null);
+
+    let url = await Promise.race([serverPromise, clientPromise]);
+    if (!url) url = await serverPromise; // fallback: wait for server
+
     if (url) {
       streamCache[videoId] = url;
       // Persist to localStorage
@@ -122,6 +129,21 @@
   function preloadStream(videoId) {
     if (!videoId || streamCache[videoId]) return;
     getStreamUrl(videoId);
+  }
+
+  // Batch pre-extract on server for instant playback
+  let _preextractTimer = null;
+  let _preextractQueue = [];
+  function serverPreextract(videoIds) {
+    _preextractQueue.push(...videoIds.filter(id => id && !streamCache[id]));
+    clearTimeout(_preextractTimer);
+    _preextractTimer = setTimeout(() => {
+      const ids = [...new Set(_preextractQueue)].slice(0, 15);
+      _preextractQueue = [];
+      if (ids.length) {
+        apiGet('/api/preextract?ids=' + ids.join(',')).catch(() => {});
+      }
+    }, 300);
   }
 
   async function clientExtractStream(videoId) {
@@ -884,6 +906,7 @@
       bindImageFallback(homeTracks);
       // Preload ALL home tracks
       tracks.forEach(t => preloadStream(t.id));
+      serverPreextract(tracks.map(t => t.id));
       $$('.card').forEach(c => c.addEventListener('click', function () {
         playlist = homePlaylist.slice();
         play(parseInt(this.getAttribute('data-i')));
@@ -961,6 +984,7 @@
     bindImageFallback(results);
     // Preload ALL tracks for instant playback
     arr.forEach(t => preloadStream(t.id));
+    serverPreextract(arr.map(t => t.id));
     $$('.ri').forEach(r => r.addEventListener('click', function (e) {
       if (e.target.closest('.ri-heart')) return;
       playlist = sourcePlaylist.slice();
@@ -1198,6 +1222,11 @@
   audio.addEventListener('pause', () => {
     fsBg.classList.remove('animating');
   });
+
+  // Keep server alive — ping every 4 minutes to prevent Render cold start
+  setInterval(() => {
+    apiGet('/api/keepalive').catch(() => {});
+  }, 240000);
 
   applyLang();
 })();

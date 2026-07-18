@@ -16,7 +16,7 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 
 _cache = {}
 _cache_lock = threading.Lock()
-CACHE_TTL = 1800
+CACHE_TTL = 3600  # 1 hour for stream URLs
 
 COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
 
@@ -33,6 +33,20 @@ def _cache_get(key):
 def _cache_set(key, val):
     with _cache_lock:
         _cache[key] = (time.time(), val)
+
+
+# Background stream pre-extraction
+def _preextract_stream(vid):
+    """Extract stream URL in background thread for instant playback later."""
+    cache_key = f'stream:{vid}'
+    if _cache_get(cache_key):
+        return
+    try:
+        result = _extract_ytdlp(vid)
+        if result:
+            _cache_set(cache_key, result)
+    except Exception:
+        pass
 
 
 @app.route('/')
@@ -56,6 +70,23 @@ def api_health():
         'yt_dlp': yt_dlp.version.__version__ if hasattr(yt_dlp, 'version') else 'unknown',
         'cookies': has_cookies,
     })
+
+
+@app.route('/api/keepalive')
+def api_keepalive():
+    return jsonify({'status': 'alive', 'time': time.time()})
+
+
+@app.route('/api/preextract')
+def api_preextract():
+    """Pre-extract stream URLs for given video IDs in background."""
+    ids = request.args.get('ids', '').strip()
+    if not ids:
+        return jsonify({'status': 'no ids'})
+    vid_list = [v.strip() for v in ids.split(',') if v.strip()][:10]
+    for vid in vid_list:
+        threading.Thread(target=_preextract_stream, args=(vid,), daemon=True).start()
+    return jsonify({'status': 'preextracting', 'count': len(vid_list)})
 
 
 def _extract_ytdlp(vid):
@@ -226,6 +257,11 @@ def api_search():
     except Exception as e:
         app.logger.error('search failed: %s', e)
     _cache_set(cache_key, items)
+    # Pre-extract stream URLs in background for instant playback
+    for item in items[:10]:
+        vid = item.get('id', '')
+        if vid:
+            threading.Thread(target=_preextract_stream, args=(vid,), daemon=True).start()
     return jsonify({'items': items})
 
 
