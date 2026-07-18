@@ -75,7 +75,18 @@
     .p-center { display: none !important; }
     .p-right { width: auto !important; }
     .vol-slider { display: none !important; }
-    .p-play { width: 34px !important; height: 34px !important; border-radius: 50% !important; outline: none !important; }
+    .p-play { width: 34px !important; height: 34px !important; border-radius: 50% !important; outline: none !important; position: relative; }
+    .p-play.is-loading {
+      background: rgba(255,255,255,0.15) !important;
+      border: 2px solid rgba(255,255,255,0.2) !important;
+    }
+    .p-play.is-loading svg { display: none !important; }
+    .p-play.is-loading::after {
+      content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #1db954;
+      border-radius: 50%; animation: spinLoading 0.7s linear infinite;
+    }
+    @keyframes spinLoading { to { transform: translate(-50%, -50%) rotate(360deg); } }
     .p-btn { width: 28px !important; height: 28px !important; outline: none !important; }
     .p-btn svg { width: 18px !important; height: 18px !important; }
     .p-heart { display: none !important; }
@@ -291,6 +302,13 @@
       width: 64px; height: 64px; border-radius: 50%;
       background: #fff; color: #000;
       box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      position: relative;
+    }
+    .fs-play.is-loading { background: rgba(255,255,255,0.2) !important; color: transparent !important; }
+    .fs-play.is-loading::after {
+      content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 24px; height: 24px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
+      border-radius: 50%; animation: spinLoading 0.7s linear infinite;
     }
     .fs-play svg { width: 30px; height: 30px; }
     .fs-play:active { transform: scale(0.9); }

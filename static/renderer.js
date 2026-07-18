@@ -84,6 +84,13 @@
   let lastRelatedFor = '';
   let streamCache = {};
   let loadingTrackId = '';
+  // Restore stream cache from localStorage
+  try {
+    const saved = JSON.parse(localStorage.getItem('nurspunn_stream_cache') || '{}');
+    const keys = Object.keys(saved);
+    // Only keep entries less than 2 hours old
+    keys.forEach(k => { if (saved[k] && saved[k].ts && Date.now() - saved[k].ts < 7200000) streamCache[k] = saved[k].url; });
+  } catch(e) {}
 
   async function apiGet(path) {
     try {
@@ -100,7 +107,15 @@
     if (data && data.proxy_url) url = BACKEND_URL + data.proxy_url;
     else if (data && data.url) url = data.url;
     else url = await clientExtractStream(videoId);
-    if (url) streamCache[videoId] = url;
+    if (url) {
+      streamCache[videoId] = url;
+      // Persist to localStorage
+      try {
+        const cache = {};
+        Object.keys(streamCache).forEach(k => { cache[k] = { url: streamCache[k], ts: Date.now() }; });
+        localStorage.setItem('nurspunn_stream_cache', JSON.stringify(cache));
+      } catch(e) {}
+    }
     return url;
   }
 
@@ -599,8 +614,9 @@
   // "playing" fires when audio actually starts producing sound
   audio.addEventListener('playing', () => {
     playing = true;
-    setPlayIcon(true);
     btnPlay.classList.remove('is-loading');
+    fsPlay.classList.remove('is-loading');
+    setPlayIcon(true);
     setLoading(idx >= 0 && playlist[idx] ? playlist[idx].id : '', false);
     try { if (window.AndroidMusic && playlist[idx]) { window.AndroidMusic.updateNotification(playlist[idx].title || 'nurspunn', playlist[idx].channel || 'Playing'); } } catch(e) {}
   });
@@ -608,6 +624,8 @@
   audio.addEventListener('pause', () => {
     if (!audio.ended) {
       playing = false;
+      btnPlay.classList.remove('is-loading');
+      fsPlay.classList.remove('is-loading');
       setPlayIcon(false);
     }
   });
@@ -712,7 +730,7 @@
     // Auto-open fullscreen player
     openFsPlayer();
     btnPlay.classList.add('is-loading');
-    setPlayIcon(false);
+    fsPlay.classList.add('is-loading');
     playing = false;
     audio.pause();
     audio.src = '';
@@ -726,6 +744,8 @@
         audio.removeEventListener('canplay', onReady);
         audio.removeEventListener('error', onError);
         setLoading(t.id, false);
+        btnPlay.classList.remove('is-loading');
+        fsPlay.classList.remove('is-loading');
         audio.play().catch(e => {
           console.warn('play() blocked, retrying', e);
           setTimeout(() => { audio.play().catch(() => {}); }, 400);
@@ -736,6 +756,7 @@
         audio.removeEventListener('error', onError);
         setLoading(t.id, false);
         btnPlay.classList.remove('is-loading');
+        fsPlay.classList.remove('is-loading');
         setPlayIcon(false);
         playing = false;
       }
@@ -861,8 +882,8 @@
       homeTracks.innerHTML = th;
       bindImageFallback(homeCards);
       bindImageFallback(homeTracks);
-      // Preload first 3 home tracks
-      tracks.slice(0, 3).forEach(t => preloadStream(t.id));
+      // Preload ALL home tracks
+      tracks.forEach(t => preloadStream(t.id));
       $$('.card').forEach(c => c.addEventListener('click', function () {
         playlist = homePlaylist.slice();
         play(parseInt(this.getAttribute('data-i')));
@@ -938,8 +959,8 @@
         '<div class="ri-dur"></div></div>';
     }).join('');
     bindImageFallback(results);
-    // Preload first 3 tracks for instant playback
-    arr.slice(0, 3).forEach(t => preloadStream(t.id));
+    // Preload ALL tracks for instant playback
+    arr.forEach(t => preloadStream(t.id));
     $$('.ri').forEach(r => r.addEventListener('click', function (e) {
       if (e.target.closest('.ri-heart')) return;
       playlist = sourcePlaylist.slice();
