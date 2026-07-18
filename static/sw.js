@@ -1,4 +1,4 @@
-const CACHE = 'nurspunn-v1';
+const CACHE = 'nurspunn-v2';
 const ASSETS = ['/', '/index.html', '/renderer.js', '/styles.css', '/locale.js', '/manifest.json'];
 
 self.addEventListener('install', e => {
