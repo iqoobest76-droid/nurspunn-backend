@@ -42,7 +42,7 @@ def _preextract_stream(vid):
     if _cache_get(cache_key):
         return
     try:
-        result = _extract_ytdlp(vid)
+        result = _extract_innertube(vid) or _extract_ytdlp(vid)
         if result:
             _cache_set(cache_key, result)
     except Exception:
@@ -87,6 +87,69 @@ def api_preextract():
     for vid in vid_list:
         threading.Thread(target=_preextract_stream, args=(vid,), daemon=True).start()
     return jsonify({'status': 'preextracting', 'count': len(vid_list)})
+
+
+def _extract_innertube(vid):
+    """Direct InnerTube API call — faster than yt-dlp."""
+    import urllib.request as req_lib
+    clients = [
+        {'clientName': 'WEB_REMIX', 'clientVersion': '1.20250303.00.00', 'api_key': 'AIzaSyC9WL3Uj7IsYDQNTBixLWgWYI2X0I1M3bI'},
+        {'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', 'clientVersion': '2.0', 'api_key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'},
+        {'clientName': 'ANDROID_MUSIC', 'clientVersion': '7.27.52', 'api_key': 'AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI'},
+        {'clientName': 'ANDROID', 'clientVersion': '19.29.37', 'api_key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w'},
+        {'clientName': 'IOS', 'clientVersion': '19.29.1', 'api_key': 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc'},
+    ]
+    for cl in clients:
+        try:
+            body = json.dumps({
+                'context': {
+                    'client': {
+                        'clientName': cl['clientName'],
+                        'clientVersion': cl['clientVersion'],
+                        'hl': 'en',
+                        'gl': 'US',
+                    }
+                },
+                'videoId': vid,
+                'contentCheckOk': True,
+                'racyCheckOk': True,
+            }).encode('utf-8')
+            url = f'https://www.youtube.com/youtubei/v1/player?key={cl["api_key"]}&prettyPrint=false'
+            headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': 'https://www.youtube.com/',
+            }
+            req = req_lib.Request(url, data=body, headers=headers)
+            with req_lib.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            ps = data.get('playabilityStatus', {})
+            if ps.get('status') in ('ERROR', 'UNPLAYABLE', 'LOGIN_REQUIRED'):
+                app.logger.warning('innertube %s status=%s for %s', cl['clientName'], ps.get('status'), vid)
+                continue
+            streaming = data.get('streamingData', {})
+            formats = streaming.get('adaptiveFormats', []) + streaming.get('formats', [])
+            audio = [f for f in formats if f.get('mimeType', '').startswith('audio/')]
+            if not audio:
+                continue
+            audio.sort(key=lambda f: f.get('bitrate', 0), reverse=True)
+            best = audio[0]
+            stream_url = best.get('url')
+            if stream_url:
+                return {
+                    'raw_url': stream_url,
+                    'proxy_url': f'/api/proxy?id={vid}',
+                    'title': data.get('videoDetails', {}).get('title', ''),
+                    'channel': data.get('videoDetails', {}).get('author', ''),
+                    'thumbnail': f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg',
+                    'duration': data.get('videoDetails', {}).get('lengthSeconds', 0),
+                    'strategy': f'innertube_{cl["clientName"]}',
+                }
+        except Exception as e:
+            app.logger.warning('innertube %s failed for %s: %s', cl['clientName'], vid, str(e)[:200])
+            continue
+    return None
 
 
 def _extract_ytdlp(vid):
@@ -153,7 +216,7 @@ def api_stream():
     if cached is not None:
         return jsonify(cached)
 
-    result = _extract_ytdlp(vid)
+    result = _extract_innertube(vid) or _extract_ytdlp(vid)
     if result:
         _cache_set(cache_key, result)
         return jsonify(result)
@@ -172,7 +235,7 @@ def api_proxy():
     raw_url = cached.get('raw_url') if cached else None
 
     if not raw_url:
-        result = _extract_ytdlp(vid)
+        result = _extract_innertube(vid) or _extract_ytdlp(vid)
         if result:
             _cache_set(cache_key, result)
             raw_url = result.get('raw_url')

@@ -125,128 +125,6 @@
     getStreamUrl(videoId);
   }
 
-  // Batch pre-extract on server for instant playback
-  let _preextractTimer = null;
-  let _preextractQueue = [];
-  function serverPreextract(videoIds) {
-    _preextractQueue.push(...videoIds.filter(id => id && !streamCache[id]));
-    clearTimeout(_preextractTimer);
-    _preextractTimer = setTimeout(() => {
-      const ids = [...new Set(_preextractQueue)].slice(0, 15);
-      _preextractQueue = [];
-      if (ids.length) {
-        apiGet('/api/preextract?ids=' + ids.join(',')).catch(() => {});
-      }
-    }, 300);
-  }
-
-  async function clientExtractStream(videoId) {
-    const clients = [
-      { clientName: 'ANDROID_MUSIC', clientVersion: '7.27.52', api_key: 'AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI' },
-      { clientName: 'ANDROID', clientVersion: '19.29.37', api_key: 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w' },
-      { clientName: 'IOS', clientVersion: '19.29.1', api_key: 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc' },
-      { clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', clientVersion: '2.0', api_key: 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8' },
-    ];
-    for (const cl of clients) {
-      try {
-        const body = JSON.stringify({
-          context: {
-            client: {
-              clientName: cl.clientName,
-              clientVersion: cl.clientVersion,
-              hl: 'en',
-              gl: 'US',
-            }
-          },
-          videoId: videoId,
-          contentCheckOk: true,
-          racyCheckOk: true,
-        });
-        const url = 'https://www.youtube.com/youtubei/v1/player?key=' + cl.api_key + '&prettyPrint=false';
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'com.google.android.youtube/19.29.37 (Linux; U; Android 14)',
-            'X-YouTube-Client-Name': '3',
-            'X-YouTube-Client-Version': cl.clientVersion,
-          },
-          body: body,
-          signal: AbortSignal.timeout(15000),
-        });
-        if (!r.ok) continue;
-        const data = await r.json();
-        const ps = data.playabilityStatus || {};
-        if (ps.status === 'ERROR' || ps.status === 'UNPLAYABLE') continue;
-        const streaming = data.streamingData || {};
-        const formats = (streaming.adaptiveFormats || []).concat(streaming.formats || []);
-        const audioFormats = formats.filter(f => (f.mimeType || '').startsWith('audio/'));
-        if (audioFormats.length === 0) continue;
-        audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        const best = audioFormats[0];
-        if (best.url) return best.url;
-        if (best.signatureCipher) {
-          const decoded = await decodeSignatureCipher(best.signatureCipher, cl.api_key);
-          if (decoded) return decoded;
-        }
-      } catch (e) { console.warn('clientExtract', cl.clientName, 'failed', e); }
-    }
-    return null;
-  }
-
-  async function decodeSignatureCipher(sc, apiKey) {
-    try {
-      const params = new URLSearchParams(sc);
-      const sig = params.get('s') || '';
-      const url = params.get('url') || '';
-      const sp = params.get('sp') || 'sig';
-      const playerUrls = [
-        'https://www.youtube.com/s/player/5f88cbaa/player_ias.vflset/en_US/base.js',
-        'https://www.youtube.com/s/player/f1ab6734/player_ias.vflset/en_US/base.js',
-        'https://www.youtube.com/s/player/f01bbb65/player_ias.vflset/en_US/base.js',
-      ];
-      let js = '';
-      for (const pUrl of playerUrls) {
-        try {
-          const resp = await fetch(pUrl, { signal: AbortSignal.timeout(8000) });
-          if (resp.ok) { js = await resp.text(); break; }
-        } catch (e) { continue; }
-      }
-      if (!js) return null;
-      const nParam = url.match(/[?&]n=([^&]*)/);
-      if (nParam) {
-        const nMatch = js.match(/\b([a-zA-Z0-9$]{2})\s*=\s*function\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*""\s*\)/);
-        if (nMatch) {
-          const funcName = nMatch[1];
-          const funcRegex = new RegExp(funcName + '\\s*=\\s*function\\s*\\(\\s*a\\s*\\)');
-          if (funcRegex.test(js)) {
-            try {
-              const enhanced = new Function('a', js.match(new RegExp(funcName + '\\s*=\\s*function\\s*\\(\\s*a\\s*\\)\\s*\\{[^}]+\\}'))[0].split('{').slice(1).join('{').replace(/\}$/, ''));
-              const newN = enhanced(sig);
-              if (newN && newN !== sig) {
-                const sep = url.includes('?') ? '&' : '?';
-                return url + sep + 'n=' + encodeURIComponent(newN);
-              }
-            } catch (e) {}
-          }
-        }
-      }
-      const funcMatch = js.match(/var\s+(\w+)\s*=\s*\[([^\]]+)\]\.join\(""\);/);
-      if (funcMatch) {
-        const ops = funcMatch[2].split(',').map(s => s.trim().replace(/["']/g, ''));
-        let decoded = sig.split('');
-        for (const op of ops) {
-          if (op.includes('splice')) { const n = parseInt(op.match(/\d+/)[0]); decoded.splice(0, n); }
-          else if (op.includes('reverse')) { decoded.reverse(); }
-          else { const n = parseInt(op.match(/\d+/)[0]); if (!isNaN(n) && n < decoded.length) { const c = decoded[0]; decoded[0] = decoded[n]; decoded[n] = c; } }
-        }
-        const sep = url.includes('?') ? '&' : '?';
-        return url + sep + sp + '=' + encodeURIComponent(decoded.join(''));
-      }
-      return null;
-    } catch (e) { console.warn('decodeSignatureCipher failed', e); return null; }
-  }
-
   function loadFavs() {
     try { favorites = JSON.parse(localStorage.getItem('nurspunn_favs') || '[]'); } catch(e) { favorites = []; }
   }
@@ -919,7 +797,6 @@
       bindImageFallback(homeTracks);
       // Preload ALL home tracks
       tracks.forEach(t => preloadStream(t.id));
-      serverPreextract(tracks.map(t => t.id));
       $$('.card').forEach(c => c.addEventListener('click', function () {
         playlist = homePlaylist.slice();
         play(parseInt(this.getAttribute('data-i')));
@@ -997,7 +874,6 @@
     bindImageFallback(results);
     // Preload ALL tracks for instant playback
     arr.forEach(t => preloadStream(t.id));
-    serverPreextract(arr.map(t => t.id));
     $$('.ri').forEach(r => r.addEventListener('click', function (e) {
       if (e.target.closest('.ri-heart')) return;
       playlist = sourcePlaylist.slice();
