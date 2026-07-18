@@ -88,8 +88,13 @@
   try {
     const saved = JSON.parse(localStorage.getItem('nurspunn_stream_cache') || '{}');
     const keys = Object.keys(saved);
-    // Only keep entries less than 2 hours old
-    keys.forEach(k => { if (saved[k] && saved[k].ts && Date.now() - saved[k].ts < 7200000) streamCache[k] = saved[k].url; });
+    keys.forEach(k => {
+      if (saved[k] && saved[k].ts && Date.now() - saved[k].ts < 7200000) {
+        const val = saved[k].url;
+        // Support both old (string URL) and new (object {direct, proxy}) formats
+        streamCache[k] = typeof val === 'string' ? { proxy: val, direct: null } : val;
+      }
+    });
   } catch(e) {}
 
   async function apiGet(path) {
@@ -101,28 +106,77 @@
   }
 
   async function getStreamUrl(videoId) {
-    if (streamCache[videoId]) return streamCache[videoId];
+    if (streamCache[videoId]) {
+      const cached = streamCache[videoId];
+      // If we have both direct and proxy, return them both
+      if (typeof cached === 'object' && cached.direct) return cached;
+      return cached;
+    }
     try {
       const data = await apiGet('/api/stream?id=' + encodeURIComponent(videoId));
-      let url = null;
-      if (data && data.proxy_url) url = BACKEND_URL + data.proxy_url;
-      else if (data && data.url) url = data.url;
-      if (url) {
-        streamCache[videoId] = url;
+      let result = null;
+      if (data && data.proxy_url) {
+        result = { proxy: BACKEND_URL + data.proxy_url, direct: data.raw_url || null };
+      } else if (data && data.url) {
+        result = { proxy: null, direct: data.url };
+      }
+      if (result) {
+        streamCache[videoId] = result;
         try {
           const cache = {};
-          Object.keys(streamCache).forEach(k => { cache[k] = { url: streamCache[k], ts: Date.now() }; });
+          Object.keys(streamCache).forEach(k => {
+            const v = streamCache[k];
+            cache[k] = { url: v, ts: Date.now() };
+          });
           localStorage.setItem('nurspunn_stream_cache', JSON.stringify(cache));
         } catch(e) {}
-        return url;
+        return result;
       }
     } catch(e) { console.warn('getStreamUrl server failed', e); }
     return null;
   }
 
+  function tryPlayUrl(urls, index) {
+    if (index >= urls.length) {
+      btnPlay.classList.remove('is-loading');
+      fsPlay.classList.remove('is-loading');
+      setPlayIcon(false);
+      playing = false;
+      setLoading(idx >= 0 && playlist[idx] ? playlist[idx].id : '', false);
+      return;
+    }
+    const url = urls[index];
+    if (!url) { tryPlayUrl(urls, index + 1); return; }
+    const audioEl = audio;
+    audioEl.src = url;
+    const loadTimeout = setTimeout(() => {
+      audioEl.removeEventListener('canplay', onCanPlay);
+      audioEl.removeEventListener('error', onPlayError);
+      tryPlayUrl(urls, index + 1);
+    }, 15000);
+    function onCanPlay() {
+      clearTimeout(loadTimeout);
+      audioEl.removeEventListener('canplay', onCanPlay);
+      audioEl.removeEventListener('error', onPlayError);
+      setLoading(idx >= 0 && playlist[idx] ? playlist[idx].id : '', false);
+      btnPlay.classList.remove('is-loading');
+      fsPlay.classList.remove('is-loading');
+      audioEl.play().catch(() => {});
+    }
+    function onPlayError() {
+      clearTimeout(loadTimeout);
+      audioEl.removeEventListener('canplay', onCanPlay);
+      audioEl.removeEventListener('error', onPlayError);
+      tryPlayUrl(urls, index + 1);
+    }
+    audioEl.addEventListener('canplay', onCanPlay, { once: true });
+    audioEl.addEventListener('error', onPlayError, { once: true });
+    audioEl.load();
+  }
+
   function preloadStream(videoId) {
     if (!videoId || streamCache[videoId]) return;
-    getStreamUrl(videoId);
+    getStreamUrl(videoId); // Will cache result
   }
 
   function loadFavs() {
@@ -670,10 +724,12 @@
       audio.load();
     }
 
-    getStreamUrl(t.id).then(url => {
+    getStreamUrl(t.id).then(urls => {
       if (idx !== i) return;
-      if (url) startPlayback(url);
-      else {
+      if (urls) {
+        const urlList = [urls.direct, urls.proxy].filter(Boolean);
+        tryPlayUrl(urlList, 0);
+      } else {
         btnPlay.classList.remove('is-loading');
         fsPlay.classList.remove('is-loading');
         setPlayIcon(false);

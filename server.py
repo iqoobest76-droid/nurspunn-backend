@@ -35,6 +35,11 @@ def _cache_set(key, val):
         _cache[key] = (time.time(), val)
 
 
+def _cache_remove(key):
+    with _cache_lock:
+        _cache.pop(key, None)
+
+
 # Stream pre-extraction is intentionally disabled on Render's free 512 MB
 # instance. Starting ten yt-dlp processes at once makes the service run out of
 # memory and then every play request remains on loading.
@@ -44,13 +49,10 @@ PREEXTRACT_ENABLED = os.environ.get('PREEXTRACT_ENABLED') == '1'
 # Background stream pre-extraction
 def _preextract_stream(vid):
     """Extract stream URL in background thread for instant playback later."""
-    cache_key = f'stream:{vid}'
-    if _cache_get(cache_key):
+    if _cache_get(f'stream:{vid}'):
         return
     try:
-        result = _extract_innertube(vid) or _extract_ytdlp(vid)
-        if result:
-            _cache_set(cache_key, result)
+        _extract_stream(vid)
     except Exception:
         pass
 
@@ -169,6 +171,10 @@ def _extract_url_from_cipher(cipher_str):
     import urllib.parse
     params = urllib.parse.parse_qs(cipher_str)
     return params.get('url', [None])[0]
+
+
+def _extract_ytdlp(vid):
+    """Extract stream URL using yt-dlp as fallback."""
     base_opts = {
         'format': 'bestaudio[ext=m4a]/bestaudio',
         'quiet': True,
@@ -187,7 +193,6 @@ def _extract_url_from_cipher(cipher_str):
     if os.path.exists(COOKIES_FILE):
         base_opts['cookiefile'] = COOKIES_FILE
 
-    # Keep the list short: each failed client costs memory on the free host.
     strategies = [
         ('default', {}),
         ('android', {'extractor_args': {'youtube': {'player_client': ['android']}}}),
@@ -201,10 +206,10 @@ def _extract_url_from_cipher(cipher_str):
                 info = ydl.extract_info(f'https://www.youtube.com/watch?v={vid}', download=False)
             url = info.get('url')
             if not url and info.get('formats'):
-                audio = [f for f in info['formats'] if f.get('acodec') != 'none']
-                if audio:
-                    audio.sort(key=lambda f: (f.get('abr') or f.get('tbr') or 0), reverse=True)
-                    url = audio[0].get('url')
+                audio_formats = [f for f in info['formats'] if f.get('acodec') != 'none']
+                if audio_formats:
+                    audio_formats.sort(key=lambda f: (f.get('abr') or f.get('tbr') or 0), reverse=True)
+                    url = audio_formats[0].get('url')
             if url:
                 return {
                     'raw_url': url,
@@ -221,19 +226,26 @@ def _extract_url_from_cipher(cipher_str):
     return None
 
 
+def _extract_stream(vid):
+    """Extract stream URL with caching. Tries InnerTube first, then yt-dlp."""
+    cache_key = f'stream:{vid}'
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+    result = _extract_innertube(vid) or _extract_ytdlp(vid)
+    if result:
+        _cache_set(cache_key, result)
+    return result
+
+
 @app.route('/api/stream')
 def api_stream():
     vid = request.args.get('id', '').strip()
     if not vid:
         return jsonify({'error': 'missing id'}), 400
-    cache_key = f'stream:{vid}'
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
 
-    result = _extract_innertube(vid) or _extract_ytdlp(vid)
+    result = _extract_stream(vid)
     if result:
-        _cache_set(cache_key, result)
         return jsonify(result)
 
     return jsonify({
@@ -248,23 +260,20 @@ def api_proxy():
     if not vid:
         return jsonify({'error': 'missing id'}), 400
 
-    cache_key = f'stream:{vid}'
-    cached = _cache_get(cache_key)
-    raw_url = cached.get('raw_url') if cached else None
+    result = _extract_stream(vid)
+    if not result:
+        return jsonify({'error': 'could not extract stream'}), 500
 
+    raw_url = result.get('raw_url')
     if not raw_url:
-        result = _extract_innertube(vid) or _extract_ytdlp(vid)
-        if result:
-            _cache_set(cache_key, result)
-            raw_url = result.get('raw_url')
-        if not raw_url:
-            return jsonify({'error': 'could not extract stream'}), 500
+        return jsonify({'error': 'no raw URL'}), 500
 
     range_header = request.headers.get('Range')
 
     req_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://www.youtube.com/',
+        'Origin': 'https://www.youtube.com',
     }
     if range_header:
         req_headers['Range'] = range_header
@@ -275,7 +284,7 @@ def api_proxy():
 
         status = resp.status
         resp_headers = {
-            'Content-Type': resp.headers.get('Content-Type', 'audio/webm'),
+            'Content-Type': 'audio/mp4',
             'Access-Control-Allow-Origin': '*',
             'Accept-Ranges': 'bytes',
         }
@@ -292,6 +301,35 @@ def api_proxy():
                 yield chunk
 
         return Response(generate(), status=status, headers=resp_headers)
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            app.logger.warning('proxy got 403 for %s, retrying with yt-dlp only', vid)
+            result = _extract_ytdlp(vid)
+            if result and result.get('raw_url'):
+                raw_url = result['raw_url']
+                req = urllib.request.Request(raw_url, headers=req_headers)
+                resp = urllib.request.urlopen(req, timeout=30)
+                status = resp.status
+                resp_headers = {
+                    'Content-Type': 'audio/mp4',
+                    'Access-Control-Allow-Origin': '*',
+                    'Accept-Ranges': 'bytes',
+                }
+                if resp.headers.get('Content-Length'):
+                    resp_headers['Content-Length'] = resp.headers['Content-Length']
+                if resp.headers.get('Content-Range'):
+                    resp_headers['Content-Range'] = resp.headers['Content-Range']
+
+                def generate2():
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        yield chunk
+
+                return Response(generate2(), status=status, headers=resp_headers)
+        app.logger.error('proxy HTTP error for %s: %s', vid, e)
+        return jsonify({'error': str(e)[:200]}), 500
     except Exception as e:
         app.logger.error('proxy failed for %s: %s', vid, e)
         return jsonify({'error': str(e)[:200]}), 500
